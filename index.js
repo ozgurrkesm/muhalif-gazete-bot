@@ -57,7 +57,6 @@ function saveSettings() {
 }
 
 let settings = loadSettings();
-// Eksik yeni ayarlar varsa varsayılanları ekle
 if (settings.maxAgeHours === undefined) settings.maxAgeHours = 24;
 if (settings.publishStartHour === undefined) settings.publishStartHour = 9;
 if (settings.publishEndHour === undefined) settings.publishEndHour = 2;
@@ -115,7 +114,6 @@ function isAdmin(chatId) {
 // ─── RSS + YouTube Kaynakları ─────────────────────────────────────────────────
 
 const RSS_FEEDS = [
-  // ── Haber Ajansları (Google News üzerinden) ──
   {
     url: 'https://news.google.com/rss/search?q=site:iha.com.tr&hl=tr&gl=TR&ceid=TR:tr',
     label: '📡 İHA',
@@ -137,7 +135,6 @@ const RSS_FEEDS = [
     type: 'google',
     category: 'politika',
   },
-  // ── Anadolu Ajansı ──
   {
     url: 'https://www.aa.com.tr/tr/rss/default?cat=guncel',
     label: '📡 AA | Güncel',
@@ -159,7 +156,6 @@ const RSS_FEEDS = [
     type: 'direct',
     category: 'ekonomi',
   },
-  // ── Gazeteler ──
   {
     url: 'https://www.hurriyet.com.tr/rss/anasayfa',
     label: '🗞 Hürriyet',
@@ -216,7 +212,6 @@ const RSS_FEEDS = [
     type: 'direct',
     category: 'genel',
   },
-  // ── TV Kanalları ──
   {
     url: 'https://news.google.com/rss/search?q=site:halktv.com.tr&hl=tr&gl=TR&ceid=TR:tr',
     label: '📺 Halk TV',
@@ -238,7 +233,6 @@ const RSS_FEEDS = [
     type: 'direct',
     category: 'genel',
   },
-  // ── YouTube Kanalları (doğrulanmış) ──
   {
     url: 'https://www.youtube.com/feeds/videos.xml?user=ntv',
     label: '▶️ NTV YouTube',
@@ -322,13 +316,11 @@ const parser = new RssParser({
   },
 });
 
-// ─── Konu Takip Sistemi (güncelleme haberi → reply) ──────────────────────────
+// ─── Konu Takip Sistemi ───────────────────────────────────────────────────────
 
-// Son 3 saatte yayınlanan mesajları konuya göre sakla
-const recentTopicMessages = new Map(); // topicKey → { messageId, title, publishedAt }
-const TOPIC_EXPIRE_MS = 3 * 60 * 60 * 1000; // 3 saat
+const recentTopicMessages = new Map();
+const TOPIC_EXPIRE_MS = 3 * 60 * 60 * 1000;
 
-// Türkçe stop words (anlam taşımayan kelimeler)
 const TR_STOP_WORDS = new Set([
   've','ile','de','da','ki','bu','bir','için','olan','olan','o','bu','şu','ne','çok',
   'daha','ya','veya','ama','fakat','ancak','sadece','bile','gibi','kadar','sonra',
@@ -350,7 +342,7 @@ function topicKey(words) {
 function registerSentMessage(messageId, title) {
   const words = extractTopicWords(title);
   if (words.length === 0) return;
-  const key = topicKey(words.slice(0, 6)); // ilk 6 kelime yeterli
+  const key = topicKey(words.slice(0, 6));
   recentTopicMessages.set(key, { messageId, title, publishedAt: Date.now() });
 }
 
@@ -374,7 +366,6 @@ function findRelatedMessageId(title) {
     }
   }
 
-  // Süresi dolan girişleri temizle
   for (const [key, entry] of recentTopicMessages) {
     if (now - entry.publishedAt > TOPIC_EXPIRE_MS) recentTopicMessages.delete(key);
   }
@@ -382,7 +373,7 @@ function findRelatedMessageId(title) {
   return bestId;
 }
 
-// ─── Yayınlanan URL takibi + Medya İstatistikleri ────────────────────────────
+// ─── Yayınlanan URL takibi ────────────────────────────────────────────────────
 
 function loadPublishedUrls() {
   try {
@@ -406,7 +397,6 @@ setInterval(persistPublishedUrls, 60 * 1000);
 
 let currentFeedIndex = 0;
 
-// %75 resim, %20 video, %5 metin hedefi
 const mediaStats = { image: 0, video: 0, text: 0 };
 
 function getNeededMediaType() {
@@ -439,7 +429,6 @@ function extractMedia(item) {
     if (isVideoType(mime) || mime === 'video') return { type: 'video', url: mc.$.url };
     return { type: 'image', url: mc.$.url };
   }
-  // YouTube media:group thumbnail
   const mg = item.mediaGroup || item['media:group'];
   if (mg?.['media:thumbnail']?.[0]?.$?.url) {
     return { type: 'image', url: mg['media:thumbnail'][0].$.url };
@@ -456,7 +445,6 @@ function extractMedia(item) {
 
 // ─── og:image Çekici ──────────────────────────────────────────────────────────
 
-// Haber sayfasından hem og:image hem og:description çıkar
 function fetchOgMeta(url, redirectCount = 0) {
   if (redirectCount > 3) return Promise.resolve({ image: null, description: null });
   return new Promise((resolve) => {
@@ -480,14 +468,12 @@ function fetchOgMeta(url, redirectCount = 0) {
       res.on('data', (chunk) => { html += chunk; if (html.length > 80000) res.destroy(); });
       res.on('end', () => {
         clearTimeout(timer);
-        // og:image
         const imgMatch =
           html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
           html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
           html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
         const image = imgMatch ? imgMatch[1] : null;
 
-        // og:description veya meta description
         const descMatch =
           html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{20,}?)["']/i) ||
           html.match(/<meta[^>]+content=["']([^"']{20,}?)["'][^>]+property=["']og:description["']/i) ||
@@ -497,7 +483,6 @@ function fetchOgMeta(url, redirectCount = 0) {
         const rawDesc = descMatch ? descMatch[1].replace(/&#?[a-z0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim() : null;
         const description = rawDesc && !isGarbageText(rawDesc) ? rawDesc : null;
 
-        // Makale gövdesinden <p> etiketlerini çek — AI'ya gerçek içerik ver
         const pMatches = html.match(/<p[^>]*>([^<]{40,})<\/p>/gi) || [];
         const bodyText = pMatches
           .map(p => p.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
@@ -515,7 +500,6 @@ function fetchOgMeta(url, redirectCount = 0) {
   });
 }
 
-// Geriye dönük uyumluluk
 async function fetchOgImage(url) {
   const meta = await fetchOgMeta(url);
   return meta.image;
@@ -523,13 +507,11 @@ async function fetchOgImage(url) {
 
 // ─── AI Özetleme ──────────────────────────────────────────────────────────────
 
-// SEO/spam metin tespiti
 function isGarbageText(text) {
   if (!text || text.length < 15) return true;
   const questionCount = (text.match(/\?/g) || []).length;
   const sentenceCount = (text.match(/[.!?]/g) || []).length || 1;
-  if (questionCount / sentenceCount > 0.55) return true; // çoğunluğu soru → SEO
-  // Aynı cümle tekrar ediyorsa
+  if (questionCount / sentenceCount > 0.55) return true;
   const words = text.split(/\s+/);
   if (words.length < 8) return false;
   const half = words.slice(0, Math.floor(words.length / 2)).join(' ');
@@ -561,7 +543,6 @@ function detectCategory(title, description) {
 async function summarizeNews(title, description, articleBody = null) {
   const rawText = (description || '').trim();
   const inputText = isGarbageText(rawText) ? '' : rawText;
-  // Makale gövdesini de kullan — meta description yetersizse daha zengin içerik
   const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
   const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 1500);
 
@@ -592,7 +573,6 @@ function fetchDuckDuckGoImage(query) {
     const done = (v) => { if (!settled) { settled = true; resolve(v); } };
     const timer = setTimeout(() => done(null), 8000);
 
-    // DuckDuckGo vqd token al
     const searchReq = https.get(
       `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
       { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
@@ -671,29 +651,19 @@ async function fetchArticleHtmlAndExtractVideo(url) {
 
 // ─── Wikipedia Görsel Arama ───────────────────────────────────────────────────
 
-// Başlıktan olası özel isim / konu adlarını çıkar
 function extractSubjects(title) {
-  // Türkçe iyelik/hal eklerini temizle: Erdoğan'ın → Erdoğan
   const cleaned = title.replace(/[''][a-züöşçğıİ]+/gi, '');
-
   const candidates = [];
-
-  // 1) İki veya üç ardışık büyük harfle başlayan kelime grubu (kişi adları)
   const multiWord = cleaned.match(/\b([A-ZÇĞİÖŞÜ][a-züöşçğı]+(?:\s[A-ZÇĞİÖŞÜ][a-züöşçğı]+){1,2})/g);
   if (multiWord) candidates.push(...multiWord);
-
-  // 2) Tekil büyük harfle başlayan önemli kelimeler (kurum, ülke, parti vb.)
   const singleWord = cleaned.match(/\b([A-ZÇĞİÖŞÜ][a-züöşçğı]{3,})\b/g);
   if (singleWord) {
     const stopWords = new Set(['Son', 'Bir', 'İki', 'Üç', 'Dört', 'Beş', 'Bu', 'Şu', 'O', 'Ve', 'İle', 'De', 'Da']);
     candidates.push(...singleWord.filter(w => !stopWords.has(w)));
   }
-
-  // Tekrarları kaldır, en uzun adayları öne al
   return [...new Set(candidates)].sort((a, b) => b.length - a.length).slice(0, 4);
 }
 
-// Wikipedia Türkçe API'sinden görseli çek
 function fetchWikipediaImage(query) {
   return new Promise((resolve) => {
     let settled = false;
@@ -732,7 +702,6 @@ function fetchWikipediaImage(query) {
   });
 }
 
-// Başlıktan Wikipedia görseli bulmaya çalış
 async function fetchSubjectImage(title) {
   const subjects = extractSubjects(title);
   for (const subject of subjects) {
@@ -801,14 +770,11 @@ async function notifyFilterUsers(title, description, url) {
 
 // ─── Haber Kalite Filtreleri ──────────────────────────────────────────────────
 
-// Bülten, özet, liste tipi başlıklar — bunları engelle
 const BLOCKED_TITLE_PATTERNS = [
   /bülten/i, /özet/i, /haftalık/i, /aylık/i, /günlük özet/i,
   /bülten\s*-?\s*\d+/i, /ajans haberleri/i, /haber bülteni/i,
   /toplantı notları/i, /basın açıklaması listesi/i,
-  // Canlı yayınlar — indirilemez ve haber değil
   /#canl[iı]/i, /canl[iı]\s*yay[iı]n/i, /\bLIVE\b/i,
-  // Program/talk-show kalıpları (haber değil)
   /\b(ile\s+rota|ile\s+başak|programı?|özel yayın|stüdyo|röportaj kuşağı)\b/i,
 ];
 
@@ -824,26 +790,18 @@ function isRecentNews(item) {
 function isValidNewsItem(item, feed) {
   const title = (item.title || '').trim();
   const description = (item.contentSnippet || item.summary || '').trim();
-  const url = item.link || item.guid || '';
 
-  // Başlık çok kısa
   if (title.length < 10) return false;
-
-  // Başlık sadece kaynak adı veya URL içeriyor
   if (title.toLowerCase() === feed.source.toLowerCase()) return false;
   if (/^https?:\/\//i.test(title)) return false;
-
-  // Engellenen başlık kalıpları
   if (BLOCKED_TITLE_PATTERNS.some((p) => p.test(title))) return false;
 
-  // Açıklama sadece kaynak adı veya link ise atla
   if (description && description.length < 20) {
     const descLower = description.toLowerCase();
     if (descLower === feed.source.toLowerCase()) return false;
     if (/^https?:\/\//i.test(description)) return false;
   }
 
-  // Tarih filtresi
   if (!isRecentNews(item)) {
     const rawDate = item.pubDate || item.published || item.isoDate;
     console.log(`⏭ Eski haber atlandı (${rawDate}): ${title.slice(0, 40)}`);
@@ -853,7 +811,6 @@ function isValidNewsItem(item, feed) {
   return true;
 }
 
-// Öğenin video veya resmi var mı kontrol et
 function itemHasVideo(it) {
   const enc = it.enclosure;
   if (enc?.url && enc?.type && VIDEO_TYPES.some(t => enc.type.startsWith(t.split('/')[0] + '/'))) return true;
@@ -879,7 +836,6 @@ function itemHasImage(it) {
   return /<img/i.test(content);
 }
 
-// Gerekli medya tipine göre sırala: image → video → metin
 function sortByNeededMedia(items, needed) {
   if (needed === 'video') {
     const video = items.filter(itemHasVideo);
@@ -887,18 +843,15 @@ function sortByNeededMedia(items, needed) {
     const text  = items.filter(it => !itemHasVideo(it) && !itemHasImage(it));
     return [...video, ...image, ...text];
   }
-  // 'image' veya 'any' — resimli önce, sonra videolu, sonra metin
   const image = items.filter(it => itemHasImage(it) && !itemHasVideo(it));
   const video = items.filter(itemHasVideo);
   const text  = items.filter(it => !itemHasImage(it) && !itemHasVideo(it));
   return [...image, ...video, ...text];
 }
 
-// Görseli Full HD kaliteye yükselt
 function upgradeImageUrl(url) {
   if (!url) return url;
   return url
-    // Boyut query parametrelerini kaldır
     .replace(/([?&])w=\d+/g, '$1')
     .replace(/([?&])h=\d+/g, '$1')
     .replace(/([?&])width=\d+/g, '$1')
@@ -908,7 +861,6 @@ function upgradeImageUrl(url) {
     .replace(/([?&])size=\d+/g, '$1')
     .replace(/([?&])q=\d+/g, '$1quality=95')
     .replace(/\?&+/g, '?').replace(/&&+/g, '&').replace(/[?&]$/g, '')
-    // URL yolundaki küçük boyut desenlerini kaldır
     .replace(/_\d+x\d+\.(jpg|jpeg|png|webp)/i, '.$1')
     .replace(/-\d+x\d+\.(jpg|jpeg|png|webp)/i, '.$1')
     .replace(/\/\d+x\d+\//i, '/full/')
@@ -918,21 +870,22 @@ function upgradeImageUrl(url) {
     .replace(/\/medium\//i, '/large/')
     .replace(/\/low\//i, '/high/')
     .replace(/\/preview\//i, '/original/')
-    // YouTube thumbnail: maxresdefault en yüksek kalite
     .replace(/\/hqdefault\.jpg/, '/maxresdefault.jpg')
     .replace(/\/mqdefault\.jpg/, '/maxresdefault.jpg')
     .replace(/\/sddefault\.jpg/, '/maxresdefault.jpg');
 }
 
-// YouTube videosunu yt-dlp ile indirip Telegram'a gönder (max 48MB)
+// ─── YouTube Video İndirme (yt-dlp) ──────────────────────────────────────────
+// FİX: nixpacks.toml'a yt-dlp ve ffmpeg eklenmeli (repo'daki nixpacks.toml'a bak)
+
 const MAX_VIDEO_SIZE_BYTES = 48 * 1024 * 1024;
-// yt-dlp olası kurulum yollarını dene
 const YTDLP_BIN = (() => {
   const candidates = [
     'yt-dlp',
     '/home/runner/workspace/.pythonlibs/bin/yt-dlp',
     '/usr/local/bin/yt-dlp',
     '/usr/bin/yt-dlp',
+    '/nix/var/nix/profiles/default/bin/yt-dlp',
   ];
   for (const c of candidates) {
     try { if (fs.existsSync(c)) return c; } catch {}
@@ -941,7 +894,6 @@ const YTDLP_BIN = (() => {
 })();
 
 async function sendYoutubeVideo(channelId, videoUrl, caption) {
-  // Geçici klasör kullan — yt-dlp hangi uzantıda kaydederse bul
   const tmpDir = path.join(os.tmpdir(), `ytbot_${Date.now()}`);
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
@@ -950,7 +902,6 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
     const args = [
       '--no-playlist',
       '--max-filesize', '48m',
-      // 720p mp4 öncelikli — ses+video birleşik, yoksa en iyi
       '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
@@ -977,7 +928,6 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
     let stderr = '';
     proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-    // yt-dlp bulunamadığında (ENOENT) process'in çökmesini önle
     proc.on('error', (err) => {
       clearTimeout(killTimer);
       console.error(`❌ yt-dlp hata: ${err.message}`);
@@ -1001,7 +951,6 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
         return;
       }
       try {
-        // Klasördeki ilk video dosyasını bul (mp4, webm, mkv, vb.)
         const files = fs.readdirSync(tmpDir).filter((f) => /\.(mp4|webm|mkv|mov|avi)$/i.test(f));
         if (files.length === 0) {
           console.error('❌ yt-dlp dosya oluşturmadı');
@@ -1012,7 +961,7 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
         const stat = fs.statSync(filePath);
         const mb = Math.round(stat.size / 1024 / 1024);
         if (stat.size > MAX_VIDEO_SIZE_BYTES) {
-          console.log(`⚠️ Video çok büyük (${mb}MB), thumbnail'a geçiliyor`);
+          console.log(`⚠️ Video çok büyük (${mb}MB), link önizlemesine geçiliyor`);
           resolve(false);
           return;
         }
@@ -1058,7 +1007,6 @@ function getActiveFeed() {
     if (pool.length === 0) pool = RSS_FEEDS;
   }
 
-  // Video gerekiyorsa YouTube feed'lerini önceliklendir
   const needed = getNeededMediaType();
   if (needed === 'video') {
     const youtubePools = pool.filter((f) => f.type === 'youtube');
@@ -1069,7 +1017,6 @@ function getActiveFeed() {
     }
   }
 
-  // Round-robin içinden birini seç
   const idx = currentFeedIndex % pool.length;
   currentFeedIndex++;
   return pool[idx];
@@ -1087,14 +1034,12 @@ async function fetchFeed(feed) {
 
 // ─── Haber Yayınlama ──────────────────────────────────────────────────────────
 
-// Yayın saati aralığını kontrol et (örn. 09:00-02:00)
 function isWithinPublishHours() {
   const now = new Date();
   const hour = now.getHours();
   const start = settings.publishStartHour ?? 9;
   const end = settings.publishEndHour ?? 2;
   if (start <= end) return hour >= start && hour < end;
-  // Gece yarısını aşan aralık: 09:00-02:00
   return hour >= start || hour < end;
 }
 
@@ -1141,9 +1086,12 @@ async function publishNextNews() {
     const { title, rawDesc, sonDakika, prefix } = buildItemMeta(item, feed);
     const aiSummary = await summarizeNews(title, rawDesc);
     const categoryTag = detectCategory(title, rawDesc);
+
+    // === FİX 1: Caption'a YouTube linkini ekle — kullanıcılar tıklayarak izleyebilsin ===
     let caption = `${prefix}▶️ ${title}`;
     if (aiSummary && aiSummary.length > 5) caption += `\n\n${aiSummary}`;
     if (categoryTag) caption += `\n\n${categoryTag}`;
+    caption += `\n\n🎬 ${url}`;
     if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
     const replyToId = findRelatedMessageId(title);
@@ -1163,7 +1111,7 @@ async function publishNextNews() {
     if (videoSent) {
       sentType = 'video';
     } else {
-      // 2. İndirme başarısız → 16:9 maxresdefault thumbnail gönder
+      // 2. İndirme başarısız → thumbnail + link caption ile gönder
       const thumbCandidates = videoId ? [
         `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
         `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
@@ -1173,17 +1121,25 @@ async function publishNextNews() {
       let sent = false;
       for (const tUrl of thumbCandidates) {
         try {
+          // Caption'da YouTube linki var, kullanıcı tıklayarak izleyebilir
           sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption, ...replyParam });
           sentType = 'image';
           sent = true;
+          console.log(`🖼 YouTube thumbnail gönderildi (link caption'da mevcut)`);
           break;
         } catch {}
       }
 
+      // === FİX 2: Thumbnail da başarısızsa — link önizlemeli mesaj gönder ===
+      // Telegram YouTube linklerini otomatik olarak gömüyor (thumbnail + izle butonu)
       if (!sent) {
         try {
-          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { disable_web_page_preview: true, ...replyParam });
+          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, {
+            disable_web_page_preview: false, // Telegram YouTube videosunu otomatik önizler
+            ...replyParam,
+          });
           sentType = 'text';
+          console.log(`🔗 YouTube link önizlemesi gönderildi`);
         } catch (err) { console.error(`❌ YouTube metin gönderme: ${err.message}`); }
       }
     }
@@ -1203,25 +1159,22 @@ async function publishNextNews() {
   const MAX_TRIES = 5;
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
-  let chosenOgDesc = null; // haber sayfasından çekilen gerçek açıklama
-  let chosenArticleBody = null; // haber sayfasından çekilen makale gövdesi
+  let chosenOgDesc = null;
+  let chosenArticleBody = null;
 
   for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
     const candidate = validItems[i];
     const candidateUrl = candidate.link || candidate.guid;
 
-    // 1) RSS'ten medya
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
 
-    // 2) Web'den video dene (makalede gömülü mp4)
     if (!media.url && needed === 'video') {
       console.log(`🎬 Web video aranıyor (${i+1}. deneme)...`);
       const webVid = await fetchArticleHtmlAndExtractVideo(candidateUrl);
       if (webVid) media = { type: 'video', url: webVid };
     }
 
-    // 3) og:meta (hem resim hem açıklama hem makale gövdesi)
     if (!media.url) {
       console.log(`🔍 og:meta aranıyor (${i+1}. deneme)...`);
       const ogMeta = await fetchOgMeta(candidateUrl);
@@ -1229,7 +1182,6 @@ async function publishNextNews() {
       if (ogMeta.description) chosenOgDesc = ogMeta.description;
       if (ogMeta.articleBody) chosenArticleBody = ogMeta.articleBody;
     } else {
-      // Medya bulunsa bile makale içeriğini arka planda çekmeye çalış
       fetchOgMeta(candidateUrl).then(ogMeta => {
         if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
         if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
@@ -1266,7 +1218,6 @@ async function publishNextNews() {
 
   const { title, rawDesc, description, sonDakika, prefix } = buildItemMeta(chosenItem, feed);
 
-  // Makale gövdesi henüz çekilmediyse şimdi çek (medya RSS'ten geldiğinde bu atlanmıştı)
   if (!chosenArticleBody && !chosenOgDesc) {
     try {
       const ogMeta = await fetchOgMeta(url);
@@ -1275,7 +1226,6 @@ async function publishNextNews() {
     } catch {}
   }
 
-  // Öncelik: haber sayfasından çekilen gerçek açıklama > RSS açıklaması
   const bestDesc = chosenOgDesc || description || rawDesc;
   const aiSummary = await summarizeNews(title, bestDesc, chosenArticleBody);
 
@@ -1289,10 +1239,8 @@ async function publishNextNews() {
     caption += `\n\n${categoryTag}`;
   }
 
-  // Telegram caption limiti: 1024 karakter
   if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
-  // Aynı konuya ait önceki mesajı bul (reply)
   const replyToId = findRelatedMessageId(title);
 
   let sentMsg = null;
@@ -1401,9 +1349,7 @@ function dateRangeKeyboard() {
   return { inline_keyboard: rows };
 }
 
-// Başlangıç saatleri (09, 12, 15, 18, 21, 00)
 const START_HOURS = [6, 7, 8, 9, 10, 11, 12];
-// Bitiş saatleri (00, 01, 02, 03, 23, 22)
 const END_HOURS = [0, 1, 2, 3, 22, 23, 24];
 
 function timeWindowKeyboard(mode) {
@@ -1418,7 +1364,6 @@ function timeWindowKeyboard(mode) {
     rows.push([{ text: '◀️ Geri', callback_data: 'admin_timewindow_menu' }]);
     return { inline_keyboard: rows };
   }
-  // end
   const rows = [];
   for (let i = 0; i < END_HOURS.length; i += 4) {
     rows.push(END_HOURS.slice(i, i + 4).map((h) => ({
@@ -1546,7 +1491,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── Tarih aralığı seçimi ──
   if (data.startsWith('set_daterange_')) {
     const hours = parseInt(data.replace('set_daterange_', ''));
     settings.maxAgeHours = hours;
@@ -1560,7 +1504,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── Başlangıç saati seçimi ──
   if (data.startsWith('set_start_hour_')) {
     const h = parseInt(data.replace('set_start_hour_', ''));
     settings.publishStartHour = h;
@@ -1573,7 +1516,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── Bitiş saati seçimi ──
   if (data.startsWith('set_end_hour_')) {
     const h = parseInt(data.replace('set_end_hour_', ''));
     settings.publishEndHour = h % 24;
@@ -1586,7 +1528,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── Interval seçimi ──
   if (data.startsWith('set_interval_')) {
     const val = parseFloat(data.replace('set_interval_', ''));
     settings.intervalMinutes = val;
@@ -1600,7 +1541,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── Kategori seçimi ──
   if (data.startsWith('set_category_')) {
     const cat = data.replace('set_category_', '');
     settings.activeCategory = cat;
@@ -1801,7 +1741,7 @@ bot.on('polling_error', (err) => {
   console.error(`⚠️ Polling hatası: ${err.message}`);
 });
 
-// ─── Temiz Kapanış (409 Conflict önlemi) ──────────────────────────────────────
+// ─── Temiz Kapanış ────────────────────────────────────────────────────────────
 
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM alındı, bot durduruluyor...');
