@@ -393,7 +393,25 @@ function persistPublishedUrls() {
 }
 
 const publishedUrls = loadPublishedUrls();
-setInterval(persistPublishedUrls, 60 * 1000);
+setInterval(persistPublishedUrls, 30 * 1000);
+
+// ─── Başlık bazlı tekrar engeli (Railway restart'ta sıfırlanır ama URL dosyası kalır) ──
+const publishedTitlesSession = new Set();
+
+function normalizeTitle(title) {
+  return (title || '').toLowerCase()
+    .replace(/[^a-züöşçğı0-9\s]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+function isTitleDuplicate(title) {
+  const norm = normalizeTitle(title);
+  if (publishedTitlesSession.has(norm)) return true;
+  publishedTitlesSession.add(norm);
+  return false;
+}
 
 let currentFeedIndex = 0;
 
@@ -1085,7 +1103,15 @@ async function publishNextNews() {
   if (feed.type === 'youtube') {
     const item = validItems[0];
     const url = item.link || item.guid;
+
+    const { title: checkTitle } = buildItemMeta(item, feed);
+    if (isTitleDuplicate(checkTitle)) {
+      console.log(`⏭ Başlık zaten yayınlandı (session): ${checkTitle.slice(0, 40)}`);
+      return;
+    }
+
     publishedUrls.add(url);
+    persistPublishedUrls();
 
     const { title, rawDesc, sonDakika, prefix } = buildItemMeta(item, feed);
     const aiSummary = await summarizeNews(title, rawDesc);
@@ -1218,7 +1244,14 @@ async function publishNextNews() {
   if (!chosenItem) return;
 
   const url = chosenItem.link || chosenItem.guid;
+  const { title: checkTitle2 } = buildItemMeta(chosenItem, feed);
+  if (isTitleDuplicate(checkTitle2)) {
+    console.log(`⏭ Başlık zaten yayınlandı (session): ${checkTitle2.slice(0, 40)}`);
+    return;
+  }
+
   publishedUrls.add(url);
+  persistPublishedUrls();
 
   const { title, rawDesc, description, sonDakika, prefix } = buildItemMeta(chosenItem, feed);
 
@@ -1720,6 +1753,42 @@ bot.onText(/\/filtrelerim/, (msg) => {
 bot.onText(/\/haber/, async (msg) => {
   await bot.sendMessage(msg.chat.id, '📰 Haber çekiliyor...');
   await publishNextNews();
+});
+
+bot.onText(/\/video/, async (msg) => {
+  await bot.sendMessage(msg.chat.id, '🎬 YouTube\'dan video aranıyor...');
+  const youtubeFeed = RSS_FEEDS.find(f => f.type === 'youtube');
+  if (!youtubeFeed) {
+    await bot.sendMessage(msg.chat.id, '❌ YouTube kaynağı bulunamadı.');
+    return;
+  }
+  try {
+    const parsed = await parser.parseURL(youtubeFeed.url);
+    const items = (parsed.items || []).slice(0, 10);
+    let sent = false;
+    for (const item of items) {
+      const url = item.link || item.guid;
+      if (publishedUrls.has(url)) continue;
+      const videoPath = await downloadYoutubeVideo(url);
+      if (videoPath) {
+        const { title } = buildItemMeta(item, youtubeFeed);
+        const caption = `🎬 ${title}\n\n🔗 ${url}`;
+        await bot.sendVideo(CHANNEL_ID, fs.createReadStream(videoPath), {
+          caption: caption.slice(0, 1024),
+        });
+        publishedUrls.add(url);
+        persistPublishedUrls();
+        isTitleDuplicate(title);
+        try { fs.unlinkSync(videoPath); } catch {}
+        await bot.sendMessage(msg.chat.id, '✅ Video kanala gönderildi!');
+        sent = true;
+        break;
+      }
+    }
+    if (!sent) await bot.sendMessage(msg.chat.id, '⚠️ Video indirilemedi. yt-dlp hatası veya tüm videolar zaten yayınlandı.');
+  } catch (err) {
+    await bot.sendMessage(msg.chat.id, `❌ Hata: ${err.message}`);
+  }
 });
 
 bot.onText(/\/durum/, (msg) => {
