@@ -32,7 +32,9 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+const bot = new TelegramBot(BOT_TOKEN, {
+  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100 } },
+});
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
 
@@ -592,11 +594,14 @@ async function summarizeNews(title, description, articleBody = null) {
       ? `Aşağıdaki Türkçe haberi 2-3 cümleyle, sade ve akıcı bir şekilde özetle. Önemli detayları (kim ne dedi, ne oldu, nerede) mutlaka dahil et. Kaynak adı, tarih veya link ekleme. Sadece özet metni yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
       : `Aşağıdaki haber başlığını Türkçe olarak 1-2 cümleyle kısaca açıkla. Ne olduğunu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
 
-    const response = await aiClient.chat.completions.create({
-      model: 'gpt-5-nano',
-      max_completion_tokens: 250,
-      messages: [{ role: 'user', content: prompt }],
-    });
+    const response = await Promise.race([
+      aiClient.chat.completions.create({
+        model: 'gpt-5-nano',
+        max_completion_tokens: 200,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('AI timeout')), 4000)),
+    ]);
     const result = (response.choices[0]?.message?.content || '').trim();
     if (!result || result.length < 10) return fullContent || inputText || null;
     return result;
@@ -946,7 +951,7 @@ const INVIDIOUS_INSTANCES = [
 ];
 
 // Native https ile JSON GET isteği
-function httpsGetJson(url, timeoutMs = 12000) {
+function httpsGetJson(url, timeoutMs = 12000, _redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, {
@@ -957,7 +962,8 @@ function httpsGetJson(url, timeoutMs = 12000) {
       timeout: timeoutMs,
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return httpsGetJson(res.headers.location, timeoutMs).then(resolve).catch(reject);
+        if (_redirectCount > 5) return reject(new Error('too many redirects'));
+        return httpsGetJson(res.headers.location, timeoutMs, _redirectCount + 1).then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
       let raw = '';
@@ -972,7 +978,7 @@ function httpsGetJson(url, timeoutMs = 12000) {
 }
 
 // Native https ile stream indir → dosyaya yaz
-function httpsDownloadToFile(url, destPath, maxBytes, referer, timeoutMs = 180000) {
+function httpsDownloadToFile(url, destPath, maxBytes, referer, timeoutMs = 180000, _redirectCount = 0) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, {
@@ -983,7 +989,8 @@ function httpsDownloadToFile(url, destPath, maxBytes, referer, timeoutMs = 18000
       timeout: timeoutMs,
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return httpsDownloadToFile(res.headers.location, destPath, maxBytes, referer, timeoutMs)
+        if (_redirectCount > 5) return reject(new Error('too many redirects'));
+        return httpsDownloadToFile(res.headers.location, destPath, maxBytes, referer, timeoutMs, _redirectCount + 1)
           .then(resolve).catch(reject);
       }
       if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
@@ -1032,32 +1039,40 @@ async function getInvidiousVideoUrl(videoId) {
   return null;
 }
 
-// Invidious üzerinden videoyu dosyaya indir
+// Invidious /latest_version proxy ile video indir (IP bağımsız, Invidious kendi sunucusu üzerinden proxy yapıyor)
+// itag 22 = 720p mp4 (ses+video birleşik), itag 18 = 360p mp4 (fallback)
 async function downloadFromInvidious(videoId) {
-  const info = await getInvidiousVideoUrl(videoId);
-  if (!info) { console.error('❌ Tüm Invidious sunucuları başarısız'); return null; }
+  const itagList = [
+    { itag: 22, label: '720p' },
+    { itag: 37, label: '1080p' },
+    { itag: 18, label: '360p' },
+  ];
 
-  const tmpDir = path.join(os.tmpdir(), `inv_${Date.now()}`);
-  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
-  const filePath = path.join(tmpDir, 'video.mp4');
+  for (const { itag, label } of itagList) {
+    // Tüm instanceları paralel dene, ilk çalışanı al
+    const result = await Promise.any(
+      INVIDIOUS_INSTANCES.map(instance =>
+        (async () => {
+          const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
+          const tmpDir = path.join(os.tmpdir(), `inv_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+          try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+          const filePath = path.join(tmpDir, 'video.mp4');
+          console.log(`🔍 Invidious proxy: ${instance} (itag:${itag} ${label})`);
+          await httpsDownloadToFile(proxyUrl, filePath, MAX_VIDEO_SIZE_BYTES, instance, 120000);
+          const stat = fs.statSync(filePath);
+          if (stat.size < 100000) throw new Error(`Çok küçük: ${stat.size} byte`);
+          console.log(`✅ Invidious başarılı: ${instance} (${label}, ${Math.round(stat.size/1024/1024)}MB)`);
+          return filePath;
+        })().catch(e => { console.log(`⚠️ ${instance} itag:${itag}: ${e.message?.slice(0,50)}`); throw e; })
+      )
+    ).catch(() => null);
 
-  console.log(`⬇️ Invidious'tan indiriliyor (${info.quality})...`);
-  try {
-    await httpsDownloadToFile(info.url, filePath, MAX_VIDEO_SIZE_BYTES, info.instance, 180000);
-
-    const stat = fs.statSync(filePath);
-    if (stat.size < 50000) {
-      console.error(`❌ Dosya çok küçük (${stat.size} byte)`);
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-      return null;
-    }
-    console.log(`✅ Invidious indirme tamam: ${Math.round(stat.size/1024/1024)}MB`);
-    return filePath;
-  } catch (e) {
-    console.error(`❌ Invidious indirme hatası: ${e.message}`);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    return null;
+    if (result) return result;
+    console.log(`⚠️ itag ${itag} (${label}) tüm instancelarda başarısız, sonraki deneniyor...`);
   }
+
+  console.error('❌ Invidious: tüm itag ve instance kombinasyonları başarısız');
+  return null;
 }
 
 
@@ -1420,7 +1435,7 @@ async function publishNextNews() {
     const catEmoji = categoryTag ? `${categoryTag} ` : '';
     let caption = `${prefix}${catEmoji}${title}`;
     if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
-    caption += `\n\n🎬 ${url}`;
+    // YouTube linki caption'a eklenmez (link gönderme yasak)
     if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
     const replyToId = findRelatedMessageId(title);
@@ -1440,34 +1455,23 @@ async function publishNextNews() {
     if (videoSent) {
       sentType = 'video';
     } else {
-      // Video indirilemedi — thumbnail + izle linki gönder (son çare)
-      console.log(`⚠️ Video indirilemedi, thumbnail gönderiliyor...`);
+      // Video indirilemedi — thumbnail gönder (link YOK)
+      console.log(`⚠️ Video indirilemedi, thumbnail gönderiliyor (link yok)...`);
+      // Caption'daki tüm http linklerini kaldır
+      const safeCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim();
       const thumbCandidates = videoId ? [
         `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
         `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
         `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
       ] : (thumbUrl ? [thumbUrl] : []);
 
-      let sent = false;
       for (const tUrl of thumbCandidates) {
         try {
-          sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption, ...replyParam });
+          sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption: safeCaption, ...replyParam });
           sentType = 'image';
-          sent = true;
-          console.log(`🖼 YouTube thumbnail gönderildi (geçici — video indirilemedi)`);
+          console.log(`🖼 YouTube thumbnail gönderildi (link kaldırıldı)`);
           break;
         } catch {}
-      }
-
-      if (!sent) {
-        try {
-          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, {
-            disable_web_page_preview: false,
-            ...replyParam,
-          });
-          sentType = 'text';
-          console.log(`🔗 YouTube link gönderildi (geçici — video indirilemedi)`);
-        } catch (err) { console.error(`❌ YouTube mesaj hatası: ${err.message}`); }
       }
     }
 
@@ -1576,23 +1580,28 @@ async function publishNextNews() {
       const webSent = await sendWebVideo(CHANNEL_ID, chosenMedia.url, caption, replyToId);
       if (webSent) { sentType = 'video'; }
       else {
-        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts({ disable_web_page_preview: true }));
-        sentType = 'text';
+        // Web video indirilemedi — link gönderme, haberi atla
+        console.log('⏭ Web video indirilemedi, haber atlanıyor (link yok)');
+        sentType = 'skip';
       }
     } else if (chosenMedia.type === 'image') {
       sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
       sentType = 'image';
     } else {
-      sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts({ disable_web_page_preview: true }));
-      sentType = 'text';
+      // Sadece metin — link içermiyorsa gönder
+      const safeCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim();
+      if (safeCaption.length > 5) {
+        sentMsg = await bot.sendMessage(CHANNEL_ID, safeCaption, sendOpts({ disable_web_page_preview: true }));
+        sentType = 'text';
+      } else {
+        sentType = 'skip';
+      }
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
     console.error(`❌ Gönderme hatası (${chosenMedia.type}): ${err.message}`);
-    try {
-      sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts({ disable_web_page_preview: true }));
-      sentType = 'text';
-    } catch (err2) { console.error(`❌ Metin gönderme de başarısız: ${err2.message}`); }
+    // Hata durumunda link gönderme — haberi atla
+    sentType = 'skip';
   }
 
   if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
