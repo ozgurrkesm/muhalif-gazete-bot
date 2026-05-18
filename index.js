@@ -1631,7 +1631,7 @@ async function publishNowInstant() {
               sentType = 'video'; mediaStats.video++;
               console.log(`⚡▶️ Şimdi Yayınla YouTube embed: ${ytId}`);
             } catch (e) { console.error(`❌ YouTube embed: ${e.message}`); }
-            try { require('fs').rmSync(require('path').dirname(ytPath), { recursive: true, force: true }); } catch {}
+            try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
             if (sentType === 'video') break;
           }
         }
@@ -1649,7 +1649,7 @@ async function publishNowInstant() {
             sentType = 'video'; mediaStats.video++;
             console.log('⚡🎬 Şimdi Yayınla yt-dlp generic');
           } catch (e) { console.error(`❌ yt-dlp generic: ${e.message}`); }
-          try { require('fs').rmSync(require('path').dirname(genericPath), { recursive: true, force: true }); } catch {}
+          try { fs.rmSync(path.dirname(genericPath), { recursive: true, force: true }); } catch {}
         }
       }
 
@@ -1666,7 +1666,7 @@ async function publishNowInstant() {
               sentType = 'video'; mediaStats.video++;
               console.log(`⚡▶️ Şimdi Yayınla YouTube arama: ${ytId}`);
             } catch (e) { console.error(`❌ YouTube arama: ${e.message}`); }
-            try { require('fs').rmSync(require('path').dirname(ytPath), { recursive: true, force: true }); } catch {}
+            try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
           }
         }
       }
