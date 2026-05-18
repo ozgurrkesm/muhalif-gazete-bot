@@ -922,13 +922,16 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
       '--max-filesize', '48m',
       // Android player client — YouTube bot korumasını atlar
       '--extractor-args', 'youtube:player_client=android,web',
-      '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best',
+      // En az 720p, en fazla 1080p — direkt Telegram'da izlenebilir kalite
+      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
       '--extractor-retries', '5',
       '--socket-timeout', '60',
       '--no-check-certificate',
       '--geo-bypass',
+      // 10 dakikadan uzun videoları atla (çok büyük olur)
+      '--match-filter', 'duration < 600',
       // Android YouTube kullanıcı ajanı
       '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
       '-o', outputTemplate,
@@ -1000,6 +1003,55 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
       } finally {
         try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       }
+    });
+  });
+}
+
+// yt-dlp ile video indir → dosya yolu döndür (gönderme yapmaz)
+async function downloadYoutubeVideo(videoUrl) {
+  const tmpDir = path.join(os.tmpdir(), `ytdl_${Date.now()}`);
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+  const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
+
+  return new Promise((resolve) => {
+    const args = [
+      '--no-playlist',
+      '--max-filesize', '48m',
+      '--extractor-args', 'youtube:player_client=android,web',
+      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
+      '--merge-output-format', 'mp4',
+      '--no-part',
+      '--extractor-retries', '3',
+      '--socket-timeout', '60',
+      '--no-check-certificate',
+      '--geo-bypass',
+      '--match-filter', 'duration < 600',
+      '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+      '-o', outputTemplate,
+      '--no-warnings',
+      '--quiet',
+      videoUrl,
+    ];
+
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); } catch { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    const killTimer = setTimeout(() => { proc.kill('SIGKILL'); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); }, 3 * 60 * 1000);
+
+    proc.on('error', () => { clearTimeout(killTimer); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); });
+    proc.on('close', (code) => {
+      clearTimeout(killTimer);
+      if (code !== 0) { console.error(`❌ yt-dlp hata (${code}): ${stderr.slice(-200)}`); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+      try {
+        const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
+        if (!files.length) { resolve(null); return; }
+        const filePath = path.join(tmpDir, files[0]);
+        const stat = fs.statSync(filePath);
+        if (stat.size > MAX_VIDEO_SIZE_BYTES) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+        resolve(filePath);
+      } catch { resolve(null); }
     });
   });
 }
@@ -1199,10 +1251,10 @@ async function publishNextNews() {
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
 
-    if (!media.url && needed === 'video') {
-      console.log(`🎬 Web video aranıyor (${i+1}. deneme)...`);
+    // Her haber için direkt .mp4 URL ara (sadece video modunda değil, her zaman)
+    if (!media.url || media.type !== 'video') {
       const webVid = await fetchArticleHtmlAndExtractVideo(candidateUrl);
-      if (webVid) media = { type: 'video', url: webVid };
+      if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Direkt video bulundu: ${webVid.slice(0, 60)}`); }
     }
 
     if (!media.url) {
@@ -1756,38 +1808,86 @@ bot.onText(/\/haber/, async (msg) => {
 });
 
 bot.onText(/\/video/, async (msg) => {
-  await bot.sendMessage(msg.chat.id, '🎬 YouTube\'dan video aranıyor...');
-  const youtubeFeed = RSS_FEEDS.find(f => f.type === 'youtube');
-  if (!youtubeFeed) {
-    await bot.sendMessage(msg.chat.id, '❌ YouTube kaynağı bulunamadı.');
-    return;
-  }
-  try {
-    const parsed = await parser.parseURL(youtubeFeed.url);
-    const items = (parsed.items || []).slice(0, 10);
-    let sent = false;
-    for (const item of items) {
-      const url = item.link || item.guid;
-      if (publishedUrls.has(url)) continue;
-      const videoPath = await downloadYoutubeVideo(url);
-      if (videoPath) {
-        const { title } = buildItemMeta(item, youtubeFeed);
-        const caption = `🎬 ${title}\n\n🔗 ${url}`;
-        await bot.sendVideo(CHANNEL_ID, fs.createReadStream(videoPath), {
-          caption: caption.slice(0, 1024),
-        });
-        publishedUrls.add(url);
-        persistPublishedUrls();
-        isTitleDuplicate(title);
-        try { fs.unlinkSync(videoPath); } catch {}
-        await bot.sendMessage(msg.chat.id, '✅ Video kanala gönderildi!');
-        sent = true;
-        break;
+  await bot.sendMessage(msg.chat.id, '🎬 Video aranıyor (YouTube + haber siteleri)...');
+  let sent = false;
+
+  // 1) YouTube feedlerinden yt-dlp ile indir
+  const youtubeFeeds = RSS_FEEDS.filter(f => f.type === 'youtube');
+  for (const feed of youtubeFeeds) {
+    if (sent) break;
+    try {
+      const parsed = await parser.parseURL(feed.url);
+      const items = (parsed.items || []).slice(0, 8);
+      for (const item of items) {
+        const url = item.link || item.guid;
+        if (publishedUrls.has(url)) continue;
+        const { title } = buildItemMeta(item, feed);
+        if (isTitleDuplicate(title)) continue;
+        await bot.sendMessage(msg.chat.id, `⬇️ İndiriliyor: ${title.slice(0, 50)}...`);
+        const videoPath = await downloadYoutubeVideo(url);
+        if (videoPath) {
+          const aiSummary = await summarizeNews(title, '');
+          const categoryTag = detectCategory(title, '');
+          let caption = `▶️ ${title}`;
+          if (aiSummary) caption += `\n\n${aiSummary}`;
+          if (categoryTag) caption += `\n\n${categoryTag}`;
+          caption = caption.slice(0, 1024);
+          try {
+            await bot.sendVideo(CHANNEL_ID, fs.createReadStream(videoPath), { caption, supports_streaming: true });
+            publishedUrls.add(url);
+            persistPublishedUrls();
+            try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
+            await bot.sendMessage(msg.chat.id, '✅ YouTube videosu kanala gönderildi!');
+            sent = true;
+            break;
+          } catch (e) {
+            try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
+            console.error(`❌ Video gönderme: ${e.message}`);
+          }
+        }
       }
+    } catch {}
+  }
+
+  // 2) Haber sitelerinden direkt .mp4 URL ara
+  if (!sent) {
+    await bot.sendMessage(msg.chat.id, '🔍 Haber sitelerinde direkt video aranıyor...');
+    const newsFeeds = RSS_FEEDS.filter(f => f.type !== 'youtube').slice(0, 6);
+    for (const feed of newsFeeds) {
+      if (sent) break;
+      try {
+        const parsed = await parser.parseURL(feed.url);
+        const items = (parsed.items || []).slice(0, 5);
+        for (const item of items) {
+          const url = item.link || item.guid;
+          if (publishedUrls.has(url)) continue;
+          const { title } = buildItemMeta(item, feed);
+          if (isTitleDuplicate(title)) continue;
+          const videoUrl = await fetchArticleHtmlAndExtractVideo(url);
+          if (videoUrl) {
+            const aiSummary = await summarizeNews(title, '');
+            const categoryTag = detectCategory(title, '');
+            let caption = `📰 ${title}`;
+            if (aiSummary) caption += `\n\n${aiSummary}`;
+            if (categoryTag) caption += `\n\n${categoryTag}`;
+            caption = caption.slice(0, 1024);
+            const webSent = await sendWebVideo(CHANNEL_ID, videoUrl, caption);
+            if (webSent) {
+              publishedUrls.add(url);
+              persistPublishedUrls();
+              isTitleDuplicate(title);
+              await bot.sendMessage(msg.chat.id, `✅ Haber videosu kanala gönderildi! (${feed.label})`);
+              sent = true;
+              break;
+            }
+          }
+        }
+      } catch {}
     }
-    if (!sent) await bot.sendMessage(msg.chat.id, '⚠️ Video indirilemedi. yt-dlp hatası veya tüm videolar zaten yayınlandı.');
-  } catch (err) {
-    await bot.sendMessage(msg.chat.id, `❌ Hata: ${err.message}`);
+  }
+
+  if (!sent) {
+    await bot.sendMessage(msg.chat.id, '⚠️ Hiçbir kaynaktan video bulunamadı. YouTube bot koruması veya haberlerde video yok.');
   }
 });
 
