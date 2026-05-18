@@ -931,8 +931,8 @@ const MAX_VIDEO_SIZE_BYTES = 48 * 1024 * 1024;
 
 
 // ─── Invidious API ile YouTube İndirme ────────────────────────────────────────
-// Railway IP'si YouTube'u engelliyor; Invidious bu engeli kendi sunucularında aşıyor
-// ve bize doğrudan indirilebilir video URL'i veriyor.
+// Railway IP'si YouTube'u engelliyor; Invidious proxy üzerinden gidiyoruz.
+// Tüm HTTP istekleri native https/http modülü ile yapılıyor (axios yok).
 
 const INVIDIOUS_INSTANCES = [
   'https://inv.tux.pizza',
@@ -945,22 +945,76 @@ const INVIDIOUS_INSTANCES = [
   'https://invidious.io.lol',
 ];
 
+// Native https ile JSON GET isteği
+function httpsGetJson(url, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    const req = mod.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+        'Accept': 'application/json',
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpsGetJson(res.headers.location, timeoutMs).then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw)); } catch (e) { reject(new Error('JSON parse hatası')); }
+      });
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
+
+// Native https ile stream indir → dosyaya yaz
+function httpsDownloadToFile(url, destPath, maxBytes, referer, timeoutMs = 180000) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https') ? https : http;
+    const req = mod.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+        'Referer': referer || '',
+      },
+      timeout: timeoutMs,
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return httpsDownloadToFile(res.headers.location, destPath, maxBytes, referer, timeoutMs)
+          .then(resolve).catch(reject);
+      }
+      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`HTTP ${res.statusCode}`)); }
+      const writer = fs.createWriteStream(destPath);
+      let downloaded = 0;
+      res.on('data', chunk => {
+        downloaded += chunk.length;
+        if (downloaded > maxBytes) {
+          res.destroy(); writer.destroy();
+          reject(new Error(`Dosya çok büyük (${Math.round(downloaded/1024/1024)}MB)`));
+        }
+      });
+      res.pipe(writer);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('download timeout')); });
+  });
+}
+
 // Invidious API'den 720p-1080p video URL'i al
 async function getInvidiousVideoUrl(videoId) {
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
       const apiUrl = `${instance}/api/v1/videos/${videoId}?fields=formatStreams,adaptiveFormats`;
       console.log(`🔍 Invidious deniyor: ${instance}`);
-      const res = await axios.get(apiUrl, {
-        timeout: 12000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)' },
-      });
-      const data = res.data;
+      const data = await httpsGetJson(apiUrl, 12000);
 
-      // formatStreams = video+ses birleşik (en basit indirme)
       const streams = (data.formatStreams || []).filter(s => s.url);
-
-      // Kalite önceliği: 1080p → 720p → 480p → herhangi biri
       const pick =
         streams.find(s => (s.qualityLabel || s.quality || '').startsWith('1080')) ||
         streams.find(s => (s.qualityLabel || s.quality || '').startsWith('720')) ||
@@ -978,7 +1032,7 @@ async function getInvidiousVideoUrl(videoId) {
   return null;
 }
 
-// Invidious URL'inden dosyayı indir
+// Invidious üzerinden videoyu dosyaya indir
 async function downloadFromInvidious(videoId) {
   const info = await getInvidiousVideoUrl(videoId);
   if (!info) { console.error('❌ Tüm Invidious sunucuları başarısız'); return null; }
@@ -989,40 +1043,14 @@ async function downloadFromInvidious(videoId) {
 
   console.log(`⬇️ Invidious'tan indiriliyor (${info.quality})...`);
   try {
-    const resp = await axios.get(info.url, {
-      responseType: 'stream',
-      timeout: 180000,
-      maxContentLength: MAX_VIDEO_SIZE_BYTES,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
-        'Referer': info.instance,
-      },
-    });
-
-    await new Promise((resolve, reject) => {
-      const writer = fs.createWriteStream(filePath);
-      let downloaded = 0;
-      resp.data.on('data', chunk => {
-        downloaded += chunk.length;
-        if (downloaded > MAX_VIDEO_SIZE_BYTES) {
-          resp.data.destroy();
-          writer.destroy();
-          reject(new Error(`Dosya çok büyük (${Math.round(downloaded/1024/1024)}MB)`));
-        }
-      });
-      resp.data.pipe(writer);
-      writer.on('finish', resolve);
-      writer.on('error', reject);
-      resp.data.on('error', reject);
-    });
+    await httpsDownloadToFile(info.url, filePath, MAX_VIDEO_SIZE_BYTES, info.instance, 180000);
 
     const stat = fs.statSync(filePath);
     if (stat.size < 50000) {
-      console.error(`❌ Dosya çok küçük (${stat.size} byte), muhtemelen hatalı`);
+      console.error(`❌ Dosya çok küçük (${stat.size} byte)`);
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
       return null;
     }
-
     console.log(`✅ Invidious indirme tamam: ${Math.round(stat.size/1024/1024)}MB`);
     return filePath;
   } catch (e) {
