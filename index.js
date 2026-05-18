@@ -1537,6 +1537,192 @@ function buildItemMeta(item, feed) {
   return { title, rawDesc, description, sonDakika, prefix };
 }
 
+
+// ─── Şimdi Yayınla: Anlık + Videoya Öncelik (7 Kademe) ──────────────────────
+// publishNextNews'den farklı olarak: duraklat/saat kısıtı yok, video öncelikli
+async function publishNowInstant() {
+  const feed = getActiveFeed();
+  console.log(`⚡ [Şimdi Yayınla] ${feed.label} çekiliyor...`);
+  const items = await fetchFeed(feed);
+
+  const validItems = items.filter(
+    (a) => (a.link || a.guid) && !publishedUrls.has(a.link || a.guid) && isValidNewsItem(a, feed)
+  );
+
+  if (validItems.length === 0) {
+    console.log('ℹ️ [Şimdi Yayınla] Yeni haber yok.');
+    return '❌ Yayınlanacak yeni haber bulunamadı.';
+  }
+
+  // YouTube feed'i — mevcut mantıkla gönder
+  if (feed.type === 'youtube') {
+    const item = validItems[0];
+    const url = item.link || item.guid;
+    const { title: chk } = buildItemMeta(item, feed);
+    if (isTitleDuplicate(chk)) return '⏭ Bu başlık zaten yayınlandı.';
+    publishedUrls.add(url);
+    persistPublishedUrls();
+    const { title, rawDesc, prefix } = buildItemMeta(item, feed);
+    const aiSummary = await summarizeNews(title, rawDesc);
+    const catEmoji = detectCategory(title, rawDesc) ? `${detectCategory(title, rawDesc)} ` : '';
+    let caption = `${prefix}${catEmoji}${title}`;
+    if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
+    if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+    const ok = await sendYoutubeVideo(CHANNEL_ID, url, caption);
+    mediaStats[ok ? 'video' : 'image']++;
+    return ok ? '✅ YouTube videosu yayınlandı!' : '📸 Video indirilemedi, resim gönderildi.';
+  }
+
+  // Normal feed: her haber için 7 kademeli video sistemi dene
+  const MAX_TRIES = 8;
+  for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
+    const item = validItems[i];
+    const url = item.link || item.guid;
+
+    const { title: checkTitle } = buildItemMeta(item, feed);
+    if (isTitleDuplicate(checkTitle)) continue;
+
+    publishedUrls.add(url);
+    persistPublishedUrls();
+
+    const { title, rawDesc, description, sonDakika, prefix } = buildItemMeta(item, feed);
+    const aiSummary = await summarizeNews(title, rawDesc);
+    const catTag = detectCategory(title, rawDesc);
+    const catEmoji = catTag ? `${catTag} ` : '';
+    let caption = `${prefix}${catEmoji}${title}`;
+    if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
+    if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+
+    const replyToId = findRelatedMessageId(title);
+    let sentMsg = null;
+    let sentType = 'skip';
+
+    try {
+      // ═══ Adım 1: Google News → gerçek URL ════════════════════════════════
+      let realUrl = url;
+      if (url.includes('news.google.com')) {
+        realUrl = (await resolveGoogleNewsUrl(url)) || url;
+        console.log(`🔗 [ŞY] Gerçek URL: ${realUrl.slice(0, 80)}`);
+      }
+
+      // ═══ Adım 2: Makale HTML'ini çek ═════════════════════════════════════
+      const articleHtml = await fetchArticleHtmlRaw(realUrl);
+
+      // ═══ Adım 3: HTML'den gelişmiş video çıkar ═══════════════════════════
+      if (sentType === 'skip' && articleHtml) {
+        const directVideoUrl = extractWebVideoEnhanced(articleHtml);
+        if (directVideoUrl) {
+          console.log(`🎬 [ŞY] Direkt video: ${directVideoUrl.slice(0, 70)}`);
+          const ok = await sendWebVideo(CHANNEL_ID, directVideoUrl, caption, replyToId);
+          if (ok) { sentType = 'video'; mediaStats.video++; console.log('⚡🎬 Şimdi Yayınla direkt video'); }
+        }
+      }
+
+      // ═══ Adım 4: HTML'den YouTube iframe ID çıkar ════════════════════════
+      if (sentType === 'skip' && articleHtml) {
+        const ytIds = extractYouTubeIdsFromHtml(articleHtml);
+        for (const ytId of ytIds) {
+          const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
+          if (ytPath) {
+            try {
+              const opts = { caption, supports_streaming: true };
+              if (replyToId) opts.reply_parameters = { message_id: replyToId, allow_sending_without_reply: true };
+              sentMsg = await bot.sendVideo(CHANNEL_ID, { source: ytPath }, opts);
+              sentType = 'video'; mediaStats.video++;
+              console.log(`⚡▶️ Şimdi Yayınla YouTube embed: ${ytId}`);
+            } catch (e) { console.error(`❌ YouTube embed: ${e.message}`); }
+            try { require('fs').rmSync(require('path').dirname(ytPath), { recursive: true, force: true }); } catch {}
+            if (sentType === 'video') break;
+          }
+        }
+      }
+
+      // ═══ Adım 5: yt-dlp makale sayfasında (1000+ platform) ══════════════
+      if (sentType === 'skip' && !realUrl.includes('news.google.com')) {
+        console.log(`⬇️ [ŞY] yt-dlp deneniyor: ${realUrl.slice(0, 70)}...`);
+        const genericPath = await downloadGenericWithYtdlp(realUrl);
+        if (genericPath) {
+          try {
+            const opts = { caption, supports_streaming: true };
+            if (replyToId) opts.reply_parameters = { message_id: replyToId, allow_sending_without_reply: true };
+            sentMsg = await bot.sendVideo(CHANNEL_ID, { source: genericPath }, opts);
+            sentType = 'video'; mediaStats.video++;
+            console.log('⚡🎬 Şimdi Yayınla yt-dlp generic');
+          } catch (e) { console.error(`❌ yt-dlp generic: ${e.message}`); }
+          try { require('fs').rmSync(require('path').dirname(genericPath), { recursive: true, force: true }); } catch {}
+        }
+      }
+
+      // ═══ Adım 6: Invidious ile YouTube arama ═════════════════════════════
+      if (sentType === 'skip') {
+        const ytId = await searchYouTubeByTitle(title);
+        if (ytId) {
+          const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
+          if (ytPath) {
+            try {
+              const opts = { caption, supports_streaming: true };
+              if (replyToId) opts.reply_parameters = { message_id: replyToId, allow_sending_without_reply: true };
+              sentMsg = await bot.sendVideo(CHANNEL_ID, { source: ytPath }, opts);
+              sentType = 'video'; mediaStats.video++;
+              console.log(`⚡▶️ Şimdi Yayınla YouTube arama: ${ytId}`);
+            } catch (e) { console.error(`❌ YouTube arama: ${e.message}`); }
+            try { require('fs').rmSync(require('path').dirname(ytPath), { recursive: true, force: true }); } catch {}
+          }
+        }
+      }
+
+      // ═══ Adım 7: Video yok → Full HD resim (OG meta + RSS) ══════════════
+      if (sentType === 'skip') {
+        const ogMeta = await fetchOgMeta(realUrl);
+        const rssMedia = extractMedia(item);
+        if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+        const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+        const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
+        const sendOpts = (extra) => replyToId
+          ? { ...extra, reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } }
+          : extra;
+
+        if (img1 && img2) {
+          try {
+            const msgs = await bot.sendMediaGroup(CHANNEL_ID, [
+              { type: 'photo', media: img1, caption },
+              { type: 'photo', media: img2 },
+            ], replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {});
+            sentMsg = msgs?.[0] || null;
+            sentType = 'image'; mediaStats.image++;
+            console.log('⚡📸📸 Şimdi Yayınla çift resim');
+          } catch {
+            try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, sendOpts({ caption })); sentType = 'image'; mediaStats.image++; } catch {}
+          }
+        } else if (img1) {
+          try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, sendOpts({ caption })); sentType = 'image'; mediaStats.image++; } catch {}
+        }
+
+        if (sentType === 'skip') {
+          // Hiç görsel yok — bir sonraki habere geç
+          publishedUrls.delete(url);
+          console.log(`⏭ [ŞY] Görsel/video yok, sonraki habere geçiliyor (${i + 2}. deneme)`);
+          continue;
+        }
+      }
+
+      // Başarılı gönderim
+      if (sentMsg?.message_id) { registerSentMessage(sentMsg.message_id, title); }
+      if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
+      console.log(`✅ [Şimdi Yayınla] [${sentType}] ${title.slice(0, 60)}`);
+      await notifyFilterUsers(title, rawDesc, url);
+      return sentType === 'video' ? '✅ Video başarıyla yayınlandı!' : '📸 Haber (resim) yayınlandı.';
+
+    } catch (err) {
+      console.error(`❌ [Şimdi Yayınla] hata: ${err.message}`);
+      publishedUrls.delete(url);
+    }
+  }
+
+  return '❌ Uygun medyalı haber bulunamadı, lütfen tekrar deneyin.';
+}
+
+
 async function publishNextNews() {
   if (settings.paused) { console.log('⏸ Bot duraklatıldı.'); return; }
   if (!isWithinPublishHours()) {
@@ -2501,14 +2687,17 @@ bot.on('callback_query', async (query) => {
       );
       break;
 
-    case 'admin_publish_now':
-      await bot.answerCallbackQuery(query.id, { text: '📰 Haber yayınlanıyor...' });
-      await publishNextNews();
+    case 'admin_publish_now': {
+      await bot.answerCallbackQuery(query.id, { text: '⚡ Haber aranıyor, video öncelikli...' });
+      publishNowInstant().then(async (resultMsg) => {
+        try { await bot.sendMessage(chatId, resultMsg || '✅ Tamamlandı.'); } catch {}
+      }).catch(() => {});
       await bot.editMessageText(adminPanelText(), {
         chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
         reply_markup: adminPanelKeyboard(),
       });
       break;
+    }
 
     case 'admin_toggle_pause':
       settings.paused = !settings.paused;
