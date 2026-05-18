@@ -1120,54 +1120,6 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
   }
 }
 
-// yt-dlp ile video indir → dosya yolu döndür (gönderme yapmaz)
-async function downloadYoutubeVideo(videoUrl) {
-  const tmpDir = path.join(os.tmpdir(), `ytdl_${Date.now()}`);
-  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
-  const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
-
-  return new Promise((resolve) => {
-    const args = [
-      '--no-playlist',
-      '--max-filesize', '48m',
-      '--extractor-args', 'youtube:player_client=android,web',
-      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
-      '--merge-output-format', 'mp4',
-      '--no-part',
-      '--extractor-retries', '3',
-      '--socket-timeout', '60',
-      '--no-check-certificate',
-      '--geo-bypass',
-      '--match-filter', 'duration < 600',
-      '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
-      '-o', outputTemplate,
-      '--no-warnings',
-      '--quiet',
-      videoUrl,
-    ];
-
-    let proc;
-    try { proc = spawn(YTDLP_BIN, args); } catch { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
-
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += d.toString(); });
-    const killTimer = setTimeout(() => { proc.kill('SIGKILL'); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); }, 3 * 60 * 1000);
-
-    proc.on('error', () => { clearTimeout(killTimer); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); });
-    proc.on('close', (code) => {
-      clearTimeout(killTimer);
-      if (code !== 0) { console.error(`❌ yt-dlp hata (${code}): ${stderr.slice(-200)}`); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
-      try {
-        const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
-        if (!files.length) { resolve(null); return; }
-        const filePath = path.join(tmpDir, files[0]);
-        const stat = fs.statSync(filePath);
-        if (stat.size > MAX_VIDEO_SIZE_BYTES) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
-        resolve(filePath);
-      } catch { resolve(null); }
-    });
-  });
-}
 
 // Web sayfasından doğrudan .mp4 videoyu Telegram'a gönder
 async function sendWebVideo(channelId, videoUrl, caption, replyToId = null) {
@@ -1223,7 +1175,7 @@ async function fetchFeed(feed) {
 
 function isWithinPublishHours() {
   const now = new Date();
-  const hour = (now.getUTCHours() + 3) % 24; // Railway UTC'de çalışır — Türkiye UTC+3
+  const hour = now.getHours();
   const start = settings.publishStartHour ?? 9;
   const end = settings.publishEndHour ?? 2;
   if (start <= end) return hour >= start && hour < end;
