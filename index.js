@@ -1795,10 +1795,85 @@ function resetInterval() {
   // ─── Son Dakika Tarayıcısı ────────────────────────────────────────────────────
 
   let breakingNewsInterval = null;
-  const BREAKING_INTERVAL_MS = 30 * 1000; // 30 saniye
+  const BREAKING_INTERVAL_MS = 60 * 1000; // 60 saniye
+let lastBreakingNewsTime = 0; // Ard arda gönderimi engelle
+const BREAKING_MIN_GAP_MS = 90 * 1000; // İki son dakika arası min 90 saniye
+
+  
+  // ─── Google News URL Çözücü ───────────────────────────────────────────────────
+  function resolveGoogleNewsUrl(googleUrl, depth = 0) {
+    if (depth > 5) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+      const timer = setTimeout(() => done(null), 8000);
+      const req = https.get(googleUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+        },
+      }, (res) => {
+        clearTimeout(timer);
+        // Redirect → takip et
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          res.destroy();
+          const loc = res.headers.location;
+          if (loc.startsWith('http')) {
+            resolveGoogleNewsUrl(loc, depth + 1).then(done);
+          } else {
+            done(loc);
+          }
+          return;
+        }
+        // HTML içindeki gerçek URL'yi bul
+        let html = '';
+        res.on('data', (c) => { html += c; if (html.length > 30000) res.destroy(); });
+        res.on('end', () => {
+          // Google News genellikle JS içinde ya da meta refresh'te URL'yi gömer
+          const metaRefresh = html.match(/content=["'][^"']*url=([^"']+)["']/i)?.[1];
+          if (metaRefresh && metaRefresh.startsWith('http')) return done(metaRefresh);
+          const canonicalUrl = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1];
+          if (canonicalUrl && !canonicalUrl.includes('news.google.com')) return done(canonicalUrl);
+          // JS redirect
+          const jsUrl = html.match(/window.location.(?:href|replace)s*=s*["']([^"']+)["']/)?.[1];
+          if (jsUrl && jsUrl.startsWith('http') && !jsUrl.includes('news.google.com')) return done(jsUrl);
+          done(null);
+        });
+        res.on('error', () => done(null));
+      });
+      req.on('error', () => { clearTimeout(timer); done(null); });
+      req.setTimeout(7000, () => { req.destroy(); clearTimeout(timer); done(null); });
+    });
+  }
+
+  // ─── Invidious ile YouTube Başlık Arama ──────────────────────────────────────
+  async function searchYouTubeByTitle(title) {
+    const query = title.slice(0, 80).replace(/[^wsÀ-ɏĀ-ž]/g, ' ').trim();
+    for (const instance of INVIDIOUS_INSTANCES.slice(0, 4)) {
+      try {
+        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort_by=relevance&page=1`;
+        const results = await httpsGetJson(url, 8000);
+        if (!Array.isArray(results) || results.length === 0) continue;
+        // Türkçe başlıkla en alakalı videoyu seç (ilk 3'e bak)
+        const pick = results.slice(0, 3).find(r => r.videoId && (r.lengthSeconds || 0) < 600);
+        if (pick?.videoId) {
+          console.log(`🔍 YouTube arama: "${query.slice(0, 40)}" → ${pick.videoId}`);
+          return pick.videoId;
+        }
+      } catch { /* sonraki instance'ı dene */ }
+    }
+    return null;
+  }
 
   async function checkBreakingNews() {
     if (settings.paused) return;
+
+    // Ard arda gönderimi engelle — son gönderimden 90 saniye geçmemişse atla
+    const now = Date.now();
+    if (now - lastBreakingNewsTime < BREAKING_MIN_GAP_MS) {
+      console.log(`⏳ Son dakika bekleme süresi dolmadı (${Math.round((BREAKING_MIN_GAP_MS - (now - lastBreakingNewsTime)) / 1000)}sn kaldı)`);
+      return;
+    }
 
     for (const feed of BREAKING_NEWS_FEEDS) {
       try {
@@ -1809,13 +1884,14 @@ function resetInterval() {
           return url && !publishedUrls.has(url) && isValidNewsItem(item, feed) && isBreakingNews(title);
         });
 
-        for (const item of newItems.slice(0, 2)) {
+        for (const item of newItems.slice(0, 1)) { // Döngü başına en fazla 1 haber
           const url = item.link || item.guid;
           const { title: checkTitle } = buildItemMeta(item, feed);
           if (isTitleDuplicate(checkTitle)) continue;
 
           publishedUrls.add(url);
           persistPublishedUrls();
+          lastBreakingNewsTime = Date.now();
 
           const { title, rawDesc } = buildItemMeta(item, feed);
           const aiSummary = await summarizeNews(title, rawDesc);
@@ -1832,78 +1908,87 @@ function resetInterval() {
           let sentType = 'text';
 
           try {
-            // ── Adım 1: Haberin sayfasından direkt video bul, indir ve gönder ──
-            const webVideoUrl = await fetchArticleHtmlAndExtractVideo(url);
+            // ── Google News redirect'ini çöz: gerçek makale URL'sini bul ──────
+            let articleUrl = url;
+            if (url.includes('news.google.com')) {
+              articleUrl = await resolveGoogleNewsUrl(url);
+              console.log(`🔗 Gerçek URL: ${articleUrl?.slice(0, 80) || url}`);
+            }
+            const realUrl = articleUrl || url;
+
+            // ── Adım 1: Makale sayfasından direkt video ara ───────────────────
+            const webVideoUrl = await fetchArticleHtmlAndExtractVideo(realUrl);
             if (webVideoUrl) {
-              console.log(`🎬 Son dakika video bulundu: ${webVideoUrl.slice(0, 80)}`);
+              console.log(`🎬 Video bulundu: ${webVideoUrl.slice(0, 80)}`);
               const videoSent = await sendWebVideo(CHANNEL_ID, webVideoUrl, caption, null);
               if (videoSent) {
                 sentType = 'video';
                 mediaStats.video++;
-                console.log(`🚨🎬 SON DAKİKA video yayınlandı: ${title.slice(0, 60)}`);
+                console.log(`🚨🎬 SON DAKİKA video: ${title.slice(0, 60)}`);
               }
             }
 
-            // ── Adım 2: Video yoksa/başarısızsa — maksimum kalite resim gönder ──
+            // ── Adım 2: Video yoksa YouTube'dan başlıkla ara ─────────────────
             if (sentType !== 'video') {
-              // OG meta + RSS medyasını eş zamanlı al
-              const [ogMeta, rssMedia] = await Promise.all([
-                fetchOgMeta(url),
-                Promise.resolve(extractMedia(item)),
-              ]);
+              const ytVideoId = await searchYouTubeByTitle(title);
+              if (ytVideoId) {
+                console.log(`▶️ YouTube eşleşmesi bulundu: ${ytVideoId}`);
+                const ytUrl = `https://www.youtube.com/watch?v=${ytVideoId}`;
+                const videoPath = await downloadYoutubeVideo(ytUrl);
+                if (videoPath) {
+                  try {
+                    await bot.sendVideo(CHANNEL_ID, { source: videoPath }, { caption, supports_streaming: true });
+                    sentType = 'video';
+                    mediaStats.video++;
+                    console.log(`🚨▶️ SON DAKİKA YouTube video: ${title.slice(0, 60)}`);
+                  } catch { /* devam */ }
+                  try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
+                }
+              }
+            }
 
+            // ── Adım 3: Video yoksa tam HD resim gönder ───────────────────────
+            if (sentType !== 'video') {
+              const ogMeta = await fetchOgMeta(realUrl);
+              const rssMedia = extractMedia(item);
               if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
 
-              // En yüksek kaliteli görseli seç: OG image > RSS enclosure > OG image2
               const img1 = ogMeta.image
                 ? upgradeImageUrl(ogMeta.image)
                 : (rssMedia.type === 'image' ? rssMedia.url : null);
-              const img2 = ogMeta.image2
-                ? upgradeImageUrl(ogMeta.image2)
-                : null;
+              const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
 
               if (img1 && img2) {
-                // Çift görsel — media group olarak gönder
                 try {
-                  const mediaGroup = [
+                  const msgs = await bot.sendMediaGroup(CHANNEL_ID, [
                     { type: 'photo', media: img1, caption },
                     { type: 'photo', media: img2 },
-                  ];
-                  const msgs = await bot.sendMediaGroup(CHANNEL_ID, mediaGroup);
+                  ]);
                   sentMsg = msgs?.[0] || null;
                   sentType = 'image';
                   mediaStats.image++;
-                  console.log(`🚨📸📸 SON DAKİKA çift resim: ${title.slice(0, 50)}`);
+                  console.log(`🚨📸📸 SON DAKİKA çift resim`);
                 } catch {
-                  // Çift resim başarısız → tek resim
-                  try {
-                    sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption });
-                    sentType = 'image';
-                    mediaStats.image++;
-                  } catch { sentType = 'text'; }
+                  try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; } catch { /* */ }
                 }
               } else if (img1) {
                 try {
                   sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption });
                   sentType = 'image';
                   mediaStats.image++;
-                  console.log(`🚨📸 SON DAKİKA resim: ${title.slice(0, 50)}`);
+                  console.log(`🚨📸 SON DAKİKA resim`);
                 } catch {
-                  // Görsel URL bozuk → metin
                   sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
                   sentType = 'text';
                   mediaStats.text++;
                 }
               } else {
-                // Hiç medya yok → sadece metin
                 sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
                 sentType = 'text';
                 mediaStats.text++;
-                console.log(`🚨📝 SON DAKİKA metin: ${title.slice(0, 50)}`);
               }
             }
 
-            // Mesajı sabitle
             const pinId = sentMsg?.message_id;
             if (pinId) {
               registerSentMessage(pinId, title);
@@ -1912,6 +1997,7 @@ function resetInterval() {
 
             console.log(`✅ [Son Dakika] [${sentType}] ${title.slice(0, 60)}`);
             await notifyFilterUsers(title, rawDesc, url);
+            return; // Her çalışmada 1 haber yayınla — döngüden çık
 
           } catch (err) {
             console.error(`❌ Son dakika gönderme hatası: ${err.message}`);
@@ -1923,651 +2009,4 @@ function resetInterval() {
     }
   }
 
-  function startBreakingNewsChecker() {
-    if (breakingNewsInterval) clearInterval(breakingNewsInterval);
-    breakingNewsInterval = setInterval(checkBreakingNews, BREAKING_INTERVAL_MS);
-    console.log(`🚨 Son dakika tarayıcısı aktif (her ${BREAKING_INTERVAL_MS / 1000} saniyede bir)`);
-  }
-
   
-
-// ─── Admin Panel ──────────────────────────────────────────────────────────────
-
-function adminPanelText() {
-  const sh = String(settings.publishStartHour ?? 9).padStart(2, '0');
-  const eh = String(settings.publishEndHour ?? 2).padStart(2, '0');
-  const inWindow = isWithinPublishHours();
-  return (
-    `🔧 *Admin Paneli*\n\n` +
-    `⏱ Yayın Sıklığı: *${settings.intervalMinutes} dakika*\n` +
-    `📂 Aktif Kategori: *${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}*\n` +
-    `${settings.paused ? '⏸ Durum: *Duraklatıldı*' : `▶️ Durum: *${inWindow ? 'Çalışıyor' : 'Yayın saati dışı'}*`}\n` +
-    `🕐 Yayın Saati: *${sh}:00 – ${eh}:00*\n` +
-    `📅 Haber Yaşı: *Son ${settings.maxAgeHours || 24} saat*\n` +
-    `📊 Yayınlanan: *${publishedUrls.size}* haber\n` +
-    `👥 Kullanıcı: *${Object.keys(users).length}*`
-  );
-}
-
-function adminPanelKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: '⏱ Süre Ayarla', callback_data: 'admin_interval_menu' },
-        { text: '📂 Kategori Seç', callback_data: 'admin_category_menu' },
-      ],
-      [
-        { text: '📅 Haber Aralığı', callback_data: 'admin_daterange_menu' },
-        { text: '🕐 Yayın Saati', callback_data: 'admin_timewindow_menu' },
-      ],
-      [
-        { text: '▶️ Şimdi Yayınla', callback_data: 'admin_publish_now' },
-        { text: settings.paused ? '▶️ Devam Et' : '⏸ Duraklat', callback_data: 'admin_toggle_pause' },
-      ],
-      [
-        { text: '📊 İstatistik', callback_data: 'admin_stats' },
-        { text: '📰 Kaynaklar', callback_data: 'admin_sources' },
-      ],
-    ],
-  };
-}
-
-const DATE_RANGE_OPTIONS = [
-  { label: 'Bugün (24s)', hours: 24 },
-  { label: '2 Gün (48s)', hours: 48 },
-  { label: '1 Hafta (168s)', hours: 168 },
-];
-
-function dateRangeKeyboard() {
-  const rows = DATE_RANGE_OPTIONS.map((o) => ([{
-    text: `${o.hours === settings.maxAgeHours ? '✅ ' : ''}${o.label}`,
-    callback_data: `set_daterange_${o.hours}`,
-  }]));
-  rows.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
-  return { inline_keyboard: rows };
-}
-
-const START_HOURS = [6, 7, 8, 9, 10, 11, 12];
-const END_HOURS = [0, 1, 2, 3, 22, 23, 24];
-
-function timeWindowKeyboard(mode) {
-  if (mode === 'start') {
-    const rows = [];
-    for (let i = 0; i < START_HOURS.length; i += 4) {
-      rows.push(START_HOURS.slice(i, i + 4).map((h) => ({
-        text: `${h === settings.publishStartHour ? '✅ ' : ''}${String(h).padStart(2,'0')}:00`,
-        callback_data: `set_start_hour_${h}`,
-      })));
-    }
-    rows.push([{ text: '◀️ Geri', callback_data: 'admin_timewindow_menu' }]);
-    return { inline_keyboard: rows };
-  }
-  const rows = [];
-  for (let i = 0; i < END_HOURS.length; i += 4) {
-    rows.push(END_HOURS.slice(i, i + 4).map((h) => ({
-      text: `${h === settings.publishEndHour ? '✅ ' : ''}${String(h % 24).padStart(2,'0')}:00`,
-      callback_data: `set_end_hour_${h}`,
-    })));
-  }
-  rows.push([{ text: '◀️ Geri', callback_data: 'admin_timewindow_menu' }]);
-  return { inline_keyboard: rows };
-}
-
-function timeWindowMenuKeyboard() {
-  const sh = String(settings.publishStartHour ?? 9).padStart(2, '0');
-  const eh = String(settings.publishEndHour ?? 2).padStart(2, '0');
-  return {
-    inline_keyboard: [
-      [
-        { text: `🟢 Başlangıç: ${sh}:00`, callback_data: 'admin_timewindow_start' },
-        { text: `🔴 Bitiş: ${eh}:00`, callback_data: 'admin_timewindow_end' },
-      ],
-      [{ text: '◀️ Geri', callback_data: 'admin_back' }],
-    ],
-  };
-}
-
-function intervalKeyboard() {
-  const rows = [];
-  const row1 = INTERVAL_OPTIONS.slice(0, 4).map((m) => ({
-    text: `${m === settings.intervalMinutes ? '✅ ' : ''}${m} dk`,
-    callback_data: `set_interval_${m}`,
-  }));
-  const row2 = INTERVAL_OPTIONS.slice(4).map((m) => ({
-    text: `${m === settings.intervalMinutes ? '✅ ' : ''}${m} dk`,
-    callback_data: `set_interval_${m}`,
-  }));
-  rows.push(row1);
-  if (row2.length) rows.push(row2);
-  rows.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
-  return { inline_keyboard: rows };
-}
-
-function categoryKeyboard() {
-  const cats = Object.entries(CATEGORY_LABELS);
-  const rows = [];
-  for (let i = 0; i < cats.length; i += 2) {
-    const row = cats.slice(i, i + 2).map(([key, label]) => ({
-      text: `${key === settings.activeCategory ? '✅ ' : ''}${label}`,
-      callback_data: `set_category_${key}`,
-    }));
-    rows.push(row);
-  }
-  rows.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
-  return { inline_keyboard: rows };
-}
-
-// ─── Bot Komutları ────────────────────────────────────────────────────────────
-
-bot.onText(/\/start/, (msg) => {
-  const user = getUser(msg.chat.id);
-  user.name = msg.from?.first_name || '';
-  saveUsers(users);
-  bot.sendMessage(
-    msg.chat.id,
-    `👋 Merhaba ${user.name}!\n\n` +
-    `Ben güncel Türk haberlerini takip eden bir botum.\n` +
-    `Kanalda her ${settings.intervalMinutes} dakikada haber yayınlıyorum.\n\n` +
-    `🔔 Kişisel filtre kurarak ilgilendiğin konulardaki haberleri doğrudan buraya alabilirsin!\n\n` +
-    `📌 Komutlar:\n` +
-    `/filtre ekle <kelime> — Filtre ekle\n` +
-    `/filtre sil <kelime> — Filtre sil\n` +
-    `/filtrelerim — Filtrelerimi göster\n` +
-    `/filtre temizle — Tüm filtreleri sil\n` +
-    `/haber — Anında haber yayınla\n` +
-    `/kaynaklar — Haber kaynakları\n` +
-    `/durum — Bot durumu`
-  );
-});
-
-bot.onText(/\/admin/, (msg) => {
-  const chatId = String(msg.chat.id);
-  if (!isAdmin(chatId)) {
-    bot.sendMessage(msg.chat.id,
-      '🔐 Admin paneline erişmek için:\n\n' +
-      '`/setadmin <şifre>`\n\n' +
-      'Şifreyi bilen kişi admin olabilir.',
-      { parse_mode: 'Markdown' }
-    );
-    return;
-  }
-  bot.sendMessage(msg.chat.id, adminPanelText(), {
-    parse_mode: 'Markdown',
-    reply_markup: adminPanelKeyboard(),
-  });
-});
-
-bot.onText(/\/setadmin (.+)/, (msg, match) => {
-  const password = match[1].trim();
-  const chatId = String(msg.chat.id);
-  if (password !== ADMIN_PASSWORD) {
-    bot.sendMessage(msg.chat.id, '❌ Yanlış şifre!');
-    return;
-  }
-  if (!settings.adminChatIds.includes(chatId)) {
-    settings.adminChatIds.push(chatId);
-    saveSettings();
-  }
-  console.log(`✅ Admin giriş: chatId=${chatId} — Railway'de kalıcı yapmak için ADMIN_CHAT_ID=${chatId} ekleyin`);
-  bot.sendMessage(msg.chat.id, `✅ Admin yetkisi verildi!
-
-📌 Kalıcı admin için Railway'e şunu ekleyin:
-ADMIN_CHAT_ID = ${chatId}
-
-/admin komutuyla panele erişebilirsin.`, {
-    reply_markup: adminPanelKeyboard(),
-  });
-  bot.sendMessage(msg.chat.id, adminPanelText(), {
-    parse_mode: 'Markdown',
-    reply_markup: adminPanelKeyboard(),
-  });
-});
-
-// ─── Admin Callback Sorguları ─────────────────────────────────────────────────
-
-bot.on('callback_query', async (query) => {
-  const chatId = String(query.message.chat.id);
-  const data = query.data;
-  const msgId = query.message.message_id;
-
-  // Telegram'a hemen "aldım" yanıtı ver — UI donmasını önle
-  bot.answerCallbackQuery(query.id).catch(() => {});
-
-  if (!isAdmin(chatId)) {
-    bot.sendMessage(query.message.chat.id, '❌ Admin yetkisi gerekli!').catch(() => {});
-    return;
-  }
-
-  if (data.startsWith('set_daterange_')) {
-    const hours = parseInt(data.replace('set_daterange_', ''));
-    settings.maxAgeHours = hours;
-    saveSettings();
-    const label = DATE_RANGE_OPTIONS.find((o) => o.hours === hours)?.label || `${hours}s`;
-    await bot.answerCallbackQuery(query.id, { text: `✅ Haber aralığı: ${label}` });
-    await bot.editMessageText(adminPanelText(), {
-      chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-      reply_markup: adminPanelKeyboard(),
-    });
-    return;
-  }
-
-  if (data.startsWith('set_start_hour_')) {
-    const h = parseInt(data.replace('set_start_hour_', ''));
-    settings.publishStartHour = h;
-    saveSettings();
-    await bot.answerCallbackQuery(query.id, { text: `✅ Yayın başlangıcı: ${String(h).padStart(2,'0')}:00` });
-    await bot.editMessageText(
-      `🕐 *Yayın Saati Ayarı*\n\nŞu an: *${String(settings.publishStartHour).padStart(2,'0')}:00 – ${String(settings.publishEndHour).padStart(2,'0')}:00*`,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowMenuKeyboard() }
-    );
-    return;
-  }
-
-  if (data.startsWith('set_end_hour_')) {
-    const h = parseInt(data.replace('set_end_hour_', ''));
-    settings.publishEndHour = h % 24;
-    saveSettings();
-    await bot.answerCallbackQuery(query.id, { text: `✅ Yayın bitişi: ${String(h % 24).padStart(2,'0')}:00` });
-    await bot.editMessageText(
-      `🕐 *Yayın Saati Ayarı*\n\nŞu an: *${String(settings.publishStartHour).padStart(2,'0')}:00 – ${String(settings.publishEndHour).padStart(2,'0')}:00*`,
-      { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowMenuKeyboard() }
-    );
-    return;
-  }
-
-  if (data.startsWith('set_interval_')) {
-    const val = parseFloat(data.replace('set_interval_', ''));
-    settings.intervalMinutes = val;
-    saveSettings();
-    resetInterval();
-    await bot.answerCallbackQuery(query.id, { text: `✅ Aralık ${val} dakika olarak ayarlandı!` });
-    await bot.editMessageText(adminPanelText(), {
-      chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-      reply_markup: adminPanelKeyboard(),
-    });
-    return;
-  }
-
-  if (data.startsWith('set_category_')) {
-    const cat = data.replace('set_category_', '');
-    settings.activeCategory = cat;
-    saveSettings();
-    await bot.answerCallbackQuery(query.id, { text: `✅ Kategori: ${CATEGORY_LABELS[cat] || cat}` });
-    await bot.editMessageText(adminPanelText(), {
-      chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-      reply_markup: adminPanelKeyboard(),
-    });
-    return;
-  }
-
-  switch (data) {
-    case 'admin_interval_menu':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `⏱ *Yayın Sıklığı*\n\nŞu an: *${settings.intervalMinutes} dakika*\n\nYeni süreyi seç:`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: intervalKeyboard() }
-      );
-      break;
-
-    case 'admin_daterange_menu':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `📅 *Haber Yaş Aralığı*\n\nŞu an: *Son ${settings.maxAgeHours || 24} saat*\n\nKaç saatlik haberleri yayınlayalım?`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: dateRangeKeyboard() }
-      );
-      break;
-
-    case 'admin_timewindow_menu': {
-      const sh = String(settings.publishStartHour ?? 9).padStart(2, '0');
-      const eh = String(settings.publishEndHour ?? 2).padStart(2, '0');
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `🕐 *Yayın Saati Ayarı*\n\nŞu an: *${sh}:00 – ${eh}:00*\n\nBaşlangıç veya bitiş saatini seç:`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowMenuKeyboard() }
-      );
-      break;
-    }
-
-    case 'admin_timewindow_start':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `🟢 *Yayın Başlangıç Saati*\n\nŞu an: *${String(settings.publishStartHour ?? 9).padStart(2,'0')}:00*`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowKeyboard('start') }
-      );
-      break;
-
-    case 'admin_timewindow_end':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `🔴 *Yayın Bitiş Saati*\n\nŞu an: *${String(settings.publishEndHour ?? 2).padStart(2,'0')}:00*`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowKeyboard('end') }
-      );
-      break;
-
-    case 'admin_category_menu':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `📂 *Kategori Seçimi*\n\nŞu an: *${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}*\n\nHaberler bu kategoriden yayınlanır:`,
-        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: categoryKeyboard() }
-      );
-      break;
-
-    case 'admin_publish_now':
-      await bot.answerCallbackQuery(query.id, { text: '📰 Haber yayınlanıyor...' });
-      await publishNextNews();
-      await bot.editMessageText(adminPanelText(), {
-        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: adminPanelKeyboard(),
-      });
-      break;
-
-    case 'admin_toggle_pause':
-      settings.paused = !settings.paused;
-      saveSettings();
-      await bot.answerCallbackQuery(query.id, {
-        text: settings.paused ? '⏸ Bot duraklatıldı' : '▶️ Bot devam ediyor',
-      });
-      await bot.editMessageText(adminPanelText(), {
-        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: adminPanelKeyboard(),
-      });
-      break;
-
-    case 'admin_stats': {
-      const totalUsers = Object.keys(users).length;
-      const filtered = Object.values(users).filter((u) => u.filters.length > 0).length;
-      const statsText =
-        `📊 *İstatistikler*\n\n` +
-        `📰 Yayınlanan haber: *${publishedUrls.size}*\n` +
-        `👥 Kayıtlı kullanıcı: *${totalUsers}*\n` +
-        `🔔 Filtreli kullanıcı: *${filtered}*\n` +
-        `📡 Kanal: *${CHANNEL_ID}*\n` +
-        `⏱ Yayın aralığı: *${settings.intervalMinutes} dk*\n` +
-        `📂 Kategori: *${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}*\n` +
-        `📰 Kaynak sayısı: *${RSS_FEEDS.length}*`;
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(statsText, {
-        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_back' }]] },
-      });
-      break;
-    }
-
-    case 'admin_sources': {
-      const list = RSS_FEEDS.map((f, i) => `${i + 1}. ${f.label} [${f.category}]`).join('\n');
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(
-        `📰 *Aktif Kaynaklar (${RSS_FEEDS.length})*\n\n${list}`,
-        {
-          chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-          reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_back' }]] },
-        }
-      );
-      break;
-    }
-
-    case 'admin_back':
-      await bot.answerCallbackQuery(query.id);
-      await bot.editMessageText(adminPanelText(), {
-        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: adminPanelKeyboard(),
-      });
-      break;
-
-    default:
-      await bot.answerCallbackQuery(query.id);
-  }
-});
-
-// ─── Kullanıcı Komutları ──────────────────────────────────────────────────────
-
-bot.onText(/\/filtre ekle (.+)/, (msg, match) => {
-  const keyword = match[1].trim();
-  const added = addFilter(msg.chat.id, keyword);
-  bot.sendMessage(
-    msg.chat.id,
-    added
-      ? `✅ "${keyword}" filtresi eklendi!\n\nBu kelimeyi içeren haberler sana otomatik gelecek.`
-      : `ℹ️ "${keyword}" zaten filtrelerinde var.`
-  );
-});
-
-bot.onText(/\/filtre sil (.+)/, (msg, match) => {
-  const keyword = match[1].trim();
-  const removed = removeFilter(msg.chat.id, keyword);
-  bot.sendMessage(
-    msg.chat.id,
-    removed ? `🗑 "${keyword}" filtresi silindi.` : `ℹ️ "${keyword}" filtrelerinde bulunamadı.`
-  );
-});
-
-bot.onText(/\/filtre temizle/, (msg) => {
-  clearFilters(msg.chat.id);
-  bot.sendMessage(msg.chat.id, '🗑 Tüm filtrelerin temizlendi.');
-});
-
-bot.onText(/\/filtrelerim/, (msg) => {
-  const user = getUser(msg.chat.id);
-  if (user.filters.length === 0) {
-    bot.sendMessage(msg.chat.id,
-      '📭 Henüz filtre eklemedin.\n\nÖrnek:\n/filtre ekle ekonomi\n/filtre ekle deprem\n/filtre ekle galatasaray'
-    );
-  } else {
-    const list = user.filters.map((f, i) => `${i + 1}. ${f}`).join('\n');
-    bot.sendMessage(msg.chat.id,
-      `🔍 Aktif filtrellerin (${user.filters.length} adet):\n\n${list}\n\nSilmek için: /filtre sil <kelime>`
-    );
-  }
-});
-
-
-  bot.onText(/\/sondakika/, async (msg) => {
-    if (!isAdmin(msg.chat.id)) return;
-    await bot.sendMessage(msg.chat.id, '🚨 Son dakika haberleri taranıyor...');
-    await checkBreakingNews();
-    await bot.sendMessage(msg.chat.id, '✅ Son dakika taraması tamamlandı!');
-  });
-
-  bot.onText(/\/haber/, async (msg) => {
-  await bot.sendMessage(msg.chat.id, '📰 Haber çekiliyor...');
-  await publishNextNews();
-});
-
-bot.onText(/\/video/, async (msg) => {
-  await bot.sendMessage(msg.chat.id, '🎬 Video aranıyor (YouTube + haber siteleri)...');
-  let sent = false;
-
-  // 1) YouTube feedlerinden yt-dlp ile indir
-  const youtubeFeeds = RSS_FEEDS.filter(f => f.type === 'youtube');
-  for (const feed of youtubeFeeds) {
-    if (sent) break;
-    try {
-      const parsed = await parser.parseURL(feed.url);
-      const items = (parsed.items || []).slice(0, 8);
-      for (const item of items) {
-        const url = item.link || item.guid;
-        if (publishedUrls.has(url)) continue;
-        const { title } = buildItemMeta(item, feed);
-        if (isTitleDuplicate(title)) continue;
-        await bot.sendMessage(msg.chat.id, `⬇️ İndiriliyor: ${title.slice(0, 50)}...`);
-        const videoPath = await downloadYoutubeVideo(url);
-        if (videoPath) {
-          const aiSummary = await summarizeNews(title, '');
-          const categoryTag = detectCategory(title, '');
-          const catE = categoryTag ? `${categoryTag} ` : '';
-          let caption = `${catE}${title}`;
-          if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
-          caption = caption.slice(0, 1024);
-          try {
-            await bot.sendVideo(CHANNEL_ID, { source: videoPath }, { caption, supports_streaming: true });
-            publishedUrls.add(url);
-            persistPublishedUrls();
-            try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
-            await bot.sendMessage(msg.chat.id, '✅ YouTube videosu kanala gönderildi!');
-            sent = true;
-            break;
-          } catch (e) {
-            try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
-            console.error(`❌ Video gönderme: ${e.message}`);
-          }
-        }
-      }
-    } catch {}
-  }
-
-  // 2) Haber sitelerinden direkt .mp4 URL ara
-  if (!sent) {
-    await bot.sendMessage(msg.chat.id, '🔍 Haber sitelerinde direkt video aranıyor...');
-    const newsFeeds = RSS_FEEDS.filter(f => f.type !== 'youtube').slice(0, 6);
-    for (const feed of newsFeeds) {
-      if (sent) break;
-      try {
-        const parsed = await parser.parseURL(feed.url);
-        const items = (parsed.items || []).slice(0, 5);
-        for (const item of items) {
-          const url = item.link || item.guid;
-          if (publishedUrls.has(url)) continue;
-          const { title } = buildItemMeta(item, feed);
-          if (isTitleDuplicate(title)) continue;
-          const videoUrl = await fetchArticleHtmlAndExtractVideo(url);
-          if (videoUrl) {
-            const aiSummary = await summarizeNews(title, '');
-            const categoryTag = detectCategory(title, '');
-            const catE2 = categoryTag ? `${categoryTag} ` : '';
-            let caption = `${catE2}${title}`;
-            if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
-            caption = caption.slice(0, 1024);
-            const webSent = await sendWebVideo(CHANNEL_ID, videoUrl, caption);
-            if (webSent) {
-              publishedUrls.add(url);
-              persistPublishedUrls();
-              isTitleDuplicate(title);
-              await bot.sendMessage(msg.chat.id, `✅ Haber videosu kanala gönderildi! (${feed.label})`);
-              sent = true;
-              break;
-            }
-          }
-        }
-      } catch {}
-    }
-  }
-
-  if (!sent) {
-    await bot.sendMessage(msg.chat.id, '⚠️ Hiçbir kaynaktan video bulunamadı. YouTube bot koruması veya haberlerde video yok.');
-  }
-});
-
-bot.onText(/\/durum/, (msg) => {
-  const totalUsers = Object.keys(users).length;
-  bot.sendMessage(
-    msg.chat.id,
-    `${settings.paused ? '⏸ Bot duraklatıldı' : '✅ Bot aktif!'}\n\n` +
-    `📊 Yayınlanan haber: ${publishedUrls.size}\n` +
-    `⏱ Yayın aralığı: ${settings.intervalMinutes} dakika\n` +
-    `📂 Aktif kategori: ${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}\n` +
-    `📡 Kanal: ${CHANNEL_ID}\n` +
-    `📰 Kaynak sayısı: ${RSS_FEEDS.length}\n` +
-    `👥 Kayıtlı kullanıcı: ${totalUsers}`
-  );
-});
-
-bot.onText(/\/kaynaklar/, (msg) => {
-  const list = RSS_FEEDS.map((f, i) => `${i + 1}. ${f.label}`).join('\n');
-  bot.sendMessage(msg.chat.id, `📰 Aktif haber kaynakları:\n\n${list}`);
-});
-
-bot.onText(/\/saglik/, async (msg) => {
-  const uptimeMs = Date.now() - botStartTime;
-  const uptimeSec = Math.floor(uptimeMs / 1000);
-  const hours = Math.floor(uptimeSec / 3600);
-  const mins = Math.floor((uptimeSec % 3600) / 60);
-  const secs = uptimeSec % 60;
-  const uptimeStr = hours > 0
-    ? `${hours}sa ${mins}dk`
-    : mins > 0 ? `${mins}dk ${secs}sn` : `${secs}sn`;
-
-  const total = mediaStats.image + mediaStats.video + mediaStats.text;
-  const imgPct  = total ? Math.round(mediaStats.image / total * 100) : 0;
-  const vidPct  = total ? Math.round(mediaStats.video / total * 100) : 0;
-  const txtPct  = total ? Math.round(mediaStats.text  / total * 100) : 0;
-
-  // yt-dlp varlığını kontrol et
-  let ytdlpVersion = 'Bulunamadı ❌';
-  try {
-    const { execSync } = await import('child_process');
-    const ver = execSync(`${YTDLP_BIN} --version 2>/dev/null`, { timeout: 5000 }).toString().trim();
-    ytdlpVersion = ver ? `${ver} ✅` : 'Kurulu ✅';
-  } catch { ytdlpVersion = 'Yüklü değil / erişilemiyor ❌'; }
-
-  // ffmpeg varlığını kontrol et
-  let ffmpegOk = '❌';
-  try {
-    const { execSync } = await import('child_process');
-    execSync('ffmpeg -version', { timeout: 5000 });
-    ffmpegOk = '✅';
-  } catch { ffmpegOk = '❌'; }
-
-  const botStatus = settings.paused ? '⏸ Duraklatıldı' : '✅ Aktif';
-
-  let text = `🩺 *Bot Sağlık Raporu*\n\n`;
-  text += `⚡ Durum: ${botStatus}\n`;
-  text += `⏱ Çalışma süresi: ${uptimeStr}\n`;
-  text += `📅 Yayın aralığı: ${settings.intervalMinutes} dakika\n\n`;
-
-  text += `📊 *Bu oturumda yayınlanan (${total} haber)*\n`;
-  text += `🖼 Görsel: ${mediaStats.image} (%${imgPct})\n`;
-  text += `🎬 Video: ${mediaStats.video} (%${vidPct})\n`;
-  text += `📝 Metin: ${mediaStats.text} (%${txtPct})\n`;
-  text += `📂 Toplam kayıtlı URL: ${publishedUrls.size}\n\n`;
-
-  text += `🔧 *Araçlar*\n`;
-  text += `yt-dlp: ${ytdlpVersion}\n`;
-  text += `ffmpeg: ${ffmpegOk}\n\n`;
-
-  if (recentErrors.length > 0) {
-    text += `⚠️ *Son hatalar*\n`;
-    recentErrors.slice(0, 3).forEach(e => { text += `• ${e}\n`; });
-  } else {
-    text += `✅ Son hata yok`;
-  }
-
-  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
-});
-
-bot.on('polling_error', (err) => {
-  trackError('polling', err.message);
-  console.error(`⚠️ Polling hatası: ${err.message}`);
-});
-
-// ─── Temiz Kapanış ────────────────────────────────────────────────────────────
-
-process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM alındı, bot durduruluyor...');
-  bot.stopPolling().finally(() => {
-    persistPublishedUrls();
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  bot.stopPolling().finally(() => {
-    persistPublishedUrls();
-    process.exit(0);
-  });
-});
-
-// ─── Başlat ───────────────────────────────────────────────────────────────────
-
-console.log('🚀 Telegram Haber Botu başlatılıyor...');
-console.log(`📡 Kanal: ${CHANNEL_ID}`);
-console.log(`⏱ Yayın aralığı: ${settings.intervalMinutes} dakika`);
-console.log(`📂 Aktif kategori: ${settings.activeCategory}`);
-console.log(`📰 Kaynak sayısı: ${RSS_FEEDS.length} (${RSS_FEEDS.filter(f=>f.type==='youtube').length} YouTube)`);
-console.log(`🔑 Admin şifresi ayarlı: ${ADMIN_PASSWORD !== 'admin2024' ? 'Evet' : 'Hayır (varsayılan)'}`);
-
-publishNextNews();
-resetInterval();
-startBreakingNewsChecker();
-checkBreakingNews(); // İlk kontrol hemen yap
-
-console.log('✅ Bot çalışıyor!');
