@@ -651,18 +651,28 @@ function fetchDuckDuckGoImage(query) {
 
 function extractWebVideo(html) {
   if (!html) return null;
+
+  // og:video meta tag — mp4, m3u8, webm
   const ogVideo =
     html.match(/<meta[^>]+property=["']og:video(?::url)?["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
     html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video(?::url)?["']/i)?.[1];
-  if (ogVideo && /\.(mp4|webm|ogg)/i.test(ogVideo)) return ogVideo;
+  if (ogVideo && /\.(mp4|webm|ogg|m3u8)/i.test(ogVideo)) return ogVideo;
 
+  // <video src> veya <source src>
   const videoSrc =
-    html.match(/<video[^>]+src=["']([^"']+\.(?:mp4|webm|ogg))["']/i)?.[1] ||
-    html.match(/<source[^>]+src=["']([^"']+\.(?:mp4|webm|ogg))["']/i)?.[1];
+    html.match(/<video[^>]+src=["']([^"']+\.(?:mp4|webm|ogg|m3u8))["']/i)?.[1] ||
+    html.match(/<source[^>]+src=["']([^"']+\.(?:mp4|webm|ogg|m3u8))["']/i)?.[1];
   if (videoSrc) return videoSrc;
 
-  const dataSrc = html.match(/data-src=["']([^"']+\.(?:mp4|webm))["']/i)?.[1];
+  // data-src attribute
+  const dataSrc = html.match(/data-src=["']([^"']+\.(?:mp4|webm|m3u8))["']/i)?.[1];
   if (dataSrc) return dataSrc;
+
+  // JSON player config içindeki video URL'leri (haber sitesi player'ları)
+  const jsonVid =
+    html.match(/"(?:videoUrl|video_url|hlsUrl|hls_url|streamUrl|stream_url|src)"\s*:\s*"([^"]+\.(?:mp4|m3u8|webm))"/i)?.[1] ||
+    html.match(/'(?:videoUrl|video_url|hlsUrl|hls_url|src)'\s*:\s*'([^']+\.(?:mp4|m3u8|webm))'/i)?.[1];
+  if (jsonVid) return jsonVid;
 
   return null;
 }
@@ -919,96 +929,6 @@ function upgradeImageUrl(url) {
 
 const MAX_VIDEO_SIZE_BYTES = 48 * 1024 * 1024;
 
-// Cobalt API — Railway IP'si YouTube tarafından bloklanıyor, Cobalt kendi
-// sunucularından indirip bize bir stream URL veriyor.
-async function downloadViaCobalt(videoUrl) {
-  const tmpDir = path.join(os.tmpdir(), `cobalt_${Date.now()}`);
-  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
-  const filePath = path.join(tmpDir, 'video.mp4');
-
-  const cobaltInstances = [
-    'https://api.cobalt.tools',
-    'https://cobalt.api.timelessnesses.me',
-    'https://cobalt-api.hyper.lol',
-  ];
-
-  let downloadUrl = null;
-
-  for (const base of cobaltInstances) {
-    try {
-      console.log(`🌐 Cobalt deneniyor: ${base}`);
-      const res = await fetch(`${base}/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'User-Agent': 'TelegramNewsBot/1.0',
-        },
-        body: JSON.stringify({
-          url: videoUrl,
-          videoQuality: '720',
-          filenameStyle: 'basic',
-          downloadMode: 'auto',
-        }),
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      console.log(`📦 Cobalt yanıtı: status=${data.status}`);
-      if (['stream', 'redirect', 'tunnel'].includes(data.status) && data.url) {
-        downloadUrl = data.url;
-        break;
-      }
-    } catch (e) {
-      console.error(`❌ Cobalt ${base} hatası: ${e.message}`);
-    }
-  }
-
-  if (!downloadUrl) {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    return null;
-  }
-
-  // Video dosyasını indir
-  try {
-    await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(filePath);
-      let totalBytes = 0;
-      const doGet = (url, depth = 0) => {
-        if (depth > 5) return reject(new Error('çok fazla yönlendirme'));
-        const mod = url.startsWith('https') ? https : http;
-        const req = mod.get(url, { headers: { 'User-Agent': 'TelegramNewsBot/1.0' } }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.destroy();
-            doGet(res.headers.location, depth + 1);
-            return;
-          }
-          if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
-          res.on('data', (chunk) => {
-            totalBytes += chunk.length;
-            if (totalBytes > MAX_VIDEO_SIZE_BYTES) { req.destroy(); file.close(); reject(new Error('çok büyük')); }
-          });
-          res.pipe(file);
-          file.on('finish', () => { file.close(); resolve(); });
-          res.on('error', reject);
-        });
-        req.on('error', reject);
-        req.setTimeout(120000, () => { req.destroy(); reject(new Error('zaman aşımı')); });
-      };
-      doGet(downloadUrl);
-    });
-
-    const stat = fs.statSync(filePath);
-    const mb = Math.round(stat.size / 1024 / 1024);
-    if (stat.size < 50000) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} return null; }
-    console.log(`✅ Cobalt indirme tamamlandı: ${mb}MB`);
-    return filePath;
-  } catch (err) {
-    console.error(`❌ Cobalt indirme hatası: ${err.message}`);
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-    return null;
-  }
-}
 const YTDLP_BIN = (() => {
   const candidates = [
     'yt-dlp',
@@ -1043,7 +963,7 @@ async function sendVideoFile(channelId, filePath, caption) {
 }
 
 // yt-dlp ile video indir → dosya yolu döndür
-async function downloadWithYtdlp(videoUrl) {
+async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
   const tmpDir = path.join(os.tmpdir(), `ytdlp_${Date.now()}`);
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
@@ -1052,7 +972,7 @@ async function downloadWithYtdlp(videoUrl) {
     const args = [
       '--no-playlist',
       '--max-filesize', '48m',
-      '--extractor-args', 'youtube:player_client=android,web',
+      '--extractor-args', `youtube:player_client=${clientArg}`,
       '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
@@ -1097,20 +1017,25 @@ async function downloadWithYtdlp(videoUrl) {
   });
 }
 
-// Ana video indirme: Cobalt → yt-dlp sırası ile dener
+// YouTube video indirme: yt-dlp birden fazla istemciyle dener
 async function downloadYoutubeVideo(videoUrl) {
-  console.log(`🎬 Video indiriliyor: ${videoUrl.slice(0, 60)}`);
+  console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
 
-  // 1. Önce Cobalt dene (Railway IP'si YouTube'u geçemez, Cobalt geçiyor)
-  const cobaltPath = await downloadViaCobalt(videoUrl);
-  if (cobaltPath) { console.log('✅ Cobalt başarılı'); return cobaltPath; }
+  // Farklı YouTube istemcileriyle dene — Railway IP bloğunu aşmak için
+  const clients = [
+    'tv_embedded',
+    'android',
+    'ios',
+    'mweb',
+  ];
 
-  // 2. Fallback: yt-dlp
-  console.log('⚠️ Cobalt başarısız, yt-dlp deneniyor...');
-  const ytdlpPath = await downloadWithYtdlp(videoUrl);
-  if (ytdlpPath) { console.log('✅ yt-dlp başarılı'); return ytdlpPath; }
+  for (const client of clients) {
+    console.log(`🔄 yt-dlp istemci: ${client}`);
+    const filePath = await downloadWithYtdlp(videoUrl, client);
+    if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
+  }
 
-  console.error('❌ Her iki yöntem de başarısız oldu');
+  console.error('❌ yt-dlp tüm istemciler başarısız oldu');
   return null;
 }
 
@@ -1151,6 +1076,36 @@ async function sendWebVideo(channelId, videoUrl, caption, replyToId = null) {
   const tmpDir = path.join(os.tmpdir(), `webvid_${Date.now()}`);
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const filePath = path.join(tmpDir, 'video.mp4');
+
+  // m3u8 / HLS stream — ffmpeg ile indir
+  if (videoUrl.includes('.m3u8') || videoUrl.includes('m3u8')) {
+    try {
+      console.log('📡 m3u8 stream, ffmpeg ile indiriliyor...');
+      await new Promise((resolve, reject) => {
+        const proc = spawn('ffmpeg', [
+          '-i', videoUrl,
+          '-c', 'copy',
+          '-movflags', '+faststart',
+          '-fs', String(MAX_VIDEO_SIZE_BYTES),
+          '-y', filePath,
+        ]);
+        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg kod ${code}`)));
+        proc.on('error', reject);
+        setTimeout(() => { proc.kill(); reject(new Error('ffmpeg timeout')); }, 120000);
+      });
+      const stat = fs.statSync(filePath);
+      const mb = Math.round(stat.size / 1024 / 1024);
+      console.log(`📤 m3u8 indirildi (${mb}MB), gönderiliyor...`);
+      await bot.sendVideo(channelId, { source: filePath }, opts());
+      console.log('✅ m3u8 video gönderildi');
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return true;
+    } catch (e) {
+      console.error(`❌ m3u8 ffmpeg başarısız: ${e.message}`);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return false;
+    }
+  }
 
   try {
     await new Promise((resolve, reject) => {
@@ -1193,7 +1148,24 @@ async function sendWebVideo(channelId, videoUrl, caption, replyToId = null) {
 
     const mb = Math.round(stat.size / 1024 / 1024);
     console.log(`📤 Web video indirme tamamlandı (${mb}MB), Telegram'a yükleniyor...`);
-    await bot.sendVideo(channelId, { source: filePath }, opts());
+
+    // m3u8 ise ffmpeg ile mp4'e dönüştür
+    let uploadPath = filePath;
+    if (videoUrl.includes('.m3u8') || fs.readFileSync(filePath, 'utf8').slice(0, 10).includes('#EXTM3U')) {
+      const mp4Path = filePath.replace('.mp4', '_conv.mp4');
+      try {
+        await new Promise((res, rej) => {
+          const proc = spawn('ffmpeg', ['-i', filePath, '-c', 'copy', '-movflags', '+faststart', '-y', mp4Path], { timeout: 120000 });
+          proc.on('close', code => code === 0 ? res() : rej(new Error(`ffmpeg kod ${code}`)));
+          proc.on('error', rej);
+          setTimeout(() => { proc.kill(); rej(new Error('ffmpeg timeout')); }, 110000);
+        });
+        uploadPath = mp4Path;
+        console.log('✅ ffmpeg dönüştürme tamamlandı');
+      } catch (e) { console.error(`⚠️ ffmpeg dönüştürme başarısız: ${e.message}`); }
+    }
+
+    await bot.sendVideo(channelId, { source: uploadPath }, opts());
     console.log('✅ Web video dosya olarak gönderildi');
     return true;
   } catch (err) {
