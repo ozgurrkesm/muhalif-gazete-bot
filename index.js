@@ -497,7 +497,16 @@ function fetchOgMeta(url, redirectCount = 0) {
         const rawDesc = descMatch ? descMatch[1].replace(/&#?[a-z0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim() : null;
         const description = rawDesc && !isGarbageText(rawDesc) ? rawDesc : null;
 
-        done({ image, description });
+        // Makale gövdesinden <p> etiketlerini çek — AI'ya gerçek içerik ver
+        const pMatches = html.match(/<p[^>]*>([^<]{40,})<\/p>/gi) || [];
+        const bodyText = pMatches
+          .map(p => p.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+          .filter(t => t.length > 40 && !isGarbageText(t))
+          .slice(0, 6)
+          .join(' ');
+        const articleBody = bodyText.length > 80 ? bodyText.slice(0, 1200) : null;
+
+        done({ image, description, articleBody });
       });
       res.on('error', () => { clearTimeout(timer); done({ image: null, description: null }); });
     });
@@ -529,26 +538,29 @@ function isGarbageText(text) {
   return false;
 }
 
-async function summarizeNews(title, description) {
+async function summarizeNews(title, description, articleBody = null) {
   const rawText = (description || '').trim();
   const inputText = isGarbageText(rawText) ? '' : rawText;
+  // Makale gövdesini de kullan — meta description yetersizse daha zengin içerik
+  const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
+  const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 1500);
 
-  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) return inputText || null;
+  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) return fullContent || inputText || null;
   try {
-    const prompt = inputText
-      ? `Aşağıdaki Türkçe haberi 2-3 cümleyle, sade ve akıcı bir şekilde özetle. Kaynak adı, tarih veya link ekleme. Sadece özet metni yaz.\n\nBaşlık: ${title}\nAçıklama: ${inputText}`
-      : `Aşağıdaki haber başlığını Türkçe olarak 1-2 cümleyle kısaca açıkla. Ne olduğunu veya konuyu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
+    const prompt = fullContent
+      ? `Aşağıdaki Türkçe haberi 2-3 cümleyle, sade ve akıcı bir şekilde özetle. Önemli detayları (kim ne dedi, ne oldu, nerede) mutlaka dahil et. Kaynak adı, tarih veya link ekleme. Sadece özet metni yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
+      : `Aşağıdaki haber başlığını Türkçe olarak 1-2 cümleyle kısaca açıkla. Ne olduğunu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
 
     const response = await aiClient.chat.completions.create({
       model: 'gpt-5-nano',
-      max_completion_tokens: 200,
+      max_completion_tokens: 250,
       messages: [{ role: 'user', content: prompt }],
     });
     const result = (response.choices[0]?.message?.content || '').trim();
-    if (!result || result.length < 10) return inputText || null;
+    if (!result || result.length < 10) return fullContent || inputText || null;
     return result;
   } catch {
-    return inputText || null;
+    return fullContent || inputText || null;
   }
 }
 
@@ -1166,6 +1178,7 @@ async function publishNextNews() {
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
   let chosenOgDesc = null; // haber sayfasından çekilen gerçek açıklama
+  let chosenArticleBody = null; // haber sayfasından çekilen makale gövdesi
 
   for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
     const candidate = validItems[i];
@@ -1182,12 +1195,19 @@ async function publishNextNews() {
       if (webVid) media = { type: 'video', url: webVid };
     }
 
-    // 3) og:meta (hem resim hem açıklama)
+    // 3) og:meta (hem resim hem açıklama hem makale gövdesi)
     if (!media.url) {
       console.log(`🔍 og:meta aranıyor (${i+1}. deneme)...`);
       const ogMeta = await fetchOgMeta(candidateUrl);
       if (ogMeta.image) media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
       if (ogMeta.description) chosenOgDesc = ogMeta.description;
+      if (ogMeta.articleBody) chosenArticleBody = ogMeta.articleBody;
+    } else {
+      // Medya bulunsa bile makale içeriğini arka planda çekmeye çalış
+      fetchOgMeta(candidateUrl).then(ogMeta => {
+        if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
+        if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
+      }).catch(() => {});
     }
 
     if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
@@ -1219,9 +1239,19 @@ async function publishNextNews() {
   publishedUrls.add(url);
 
   const { title, rawDesc, description, sonDakika, prefix } = buildItemMeta(chosenItem, feed);
+
+  // Makale gövdesi henüz çekilmediyse şimdi çek (medya RSS'ten geldiğinde bu atlanmıştı)
+  if (!chosenArticleBody && !chosenOgDesc) {
+    try {
+      const ogMeta = await fetchOgMeta(url);
+      if (ogMeta.description) chosenOgDesc = ogMeta.description;
+      if (ogMeta.articleBody) chosenArticleBody = ogMeta.articleBody;
+    } catch {}
+  }
+
   // Öncelik: haber sayfasından çekilen gerçek açıklama > RSS açıklaması
   const bestDesc = chosenOgDesc || description || rawDesc;
-  const aiSummary = await summarizeNews(title, bestDesc);
+  const aiSummary = await summarizeNews(title, bestDesc, chosenArticleBody);
 
   let caption = `${prefix}📰 ${title}`;
   if (aiSummary && aiSummary.length > 5) {
