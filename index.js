@@ -437,9 +437,11 @@ function getNeededMediaType() {
   if (total === 0) return 'image';
   const imageRatio = mediaStats.image / total;
   const videoRatio = mediaStats.video / total;
-  if (videoRatio < 0.20) return 'video';
-  if (imageRatio < 0.75) return 'image';
-  return 'any';
+  // Videonun oranı düşükse YouTube/web video ara
+  if (videoRatio < 0.15) return 'video';
+  // Görsel oranı her zaman yüksek tutulsun
+  if (imageRatio < 0.80) return 'image';
+  return 'image'; // Varsayılan: görsel
 }
 
 // ─── Medya Çıkarma ────────────────────────────────────────────────────────────
@@ -524,7 +526,21 @@ function fetchOgMeta(url, redirectCount = 0) {
           .join(' ');
         const articleBody = bodyText.length > 80 ? bodyText.slice(0, 1200) : null;
 
-        done({ image, description, articleBody });
+        // İkinci görsel: içerikteki büyük <img> tag'ları
+        const imgTags = html.matchAll(/<img[^>]+src=["']([^"']{20,})["']/gi);
+        let image2 = null;
+        for (const m of imgTags) {
+          const u = m[1];
+          if (u && u.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(u) && u !== image && !u.includes('logo') && !u.includes('icon') && !u.includes('avatar') && !u.includes('ads') && !u.includes('pixel') && u.length > 30) {
+            image2 = u; break;
+          }
+        }
+        // Tüm og:image variantları
+        const ogImg2m = html.match(/<meta[^>]+property=["']og:image:secure_url["'][^>]+content=["']([^"']+)["']/i) ||
+                        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image:secure_url["']/i);
+        if (ogImg2m && ogImg2m[1] !== image) image2 = ogImg2m[1];
+
+        done({ image, image2: image2 || null, description, articleBody });
       });
       res.on('error', () => { clearTimeout(timer); done({ image: null, description: null }); });
     });
@@ -675,9 +691,22 @@ function extractWebVideo(html) {
 
   // JSON player config içindeki video URL'leri (haber sitesi player'ları)
   const jsonVid =
-    html.match(/"(?:videoUrl|video_url|hlsUrl|hls_url|streamUrl|stream_url|src)"\s*:\s*"([^"]+\.(?:mp4|m3u8|webm))"/i)?.[1] ||
-    html.match(/'(?:videoUrl|video_url|hlsUrl|hls_url|src)'\s*:\s*'([^']+\.(?:mp4|m3u8|webm))'/i)?.[1];
+    html.match(/"(?:videoUrl|video_url|hlsUrl|hls_url|streamUrl|stream_url|file|src)"\s*:\s*"([^"]+\.(?:mp4|m3u8|webm))"/i)?.[1] ||
+    html.match(/'(?:videoUrl|video_url|hlsUrl|hls_url|file|src)'\s*:\s*'([^']+\.(?:mp4|m3u8|webm))'/i)?.[1];
   if (jsonVid) return jsonVid;
+
+  // JW Player config (CNN Türk, NTV, Haberturk vb.)
+  const jwFile = html.match(/file\s*:\s*["']([^"']+\.(?:mp4|m3u8))["']/i)?.[1];
+  if (jwFile) return jwFile;
+
+  // data-video-url, data-mp4, data-hls attribute
+  const dataVid =
+    html.match(/data-(?:video-url|mp4|hls|stream)=["']([^"']+\.(?:mp4|m3u8))["']/i)?.[1];
+  if (dataVid) return dataVid;
+
+  // CDN URL'leri (cdn.haberler.com, medya.ntv.com.tr vb.)
+  const cdnVid = html.match(/["'](https?:\/\/[^"']*\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/i)?.[1];
+  if (cdnVid && cdnVid.length < 500) return cdnVid;
 
   return null;
 }
@@ -1039,39 +1068,64 @@ async function getInvidiousVideoUrl(videoId) {
   return null;
 }
 
-// Invidious /latest_version proxy ile video indir (IP bağımsız, Invidious kendi sunucusu üzerinden proxy yapıyor)
-// itag 22 = 720p mp4 (ses+video birleşik), itag 18 = 360p mp4 (fallback)
+// Invidious proxy ile video indir — önce API'den mevcut itag'leri al, sonra paralel indir
 async function downloadFromInvidious(videoId) {
-  const itagList = [
-    { itag: 22, label: '720p' },
-    { itag: 37, label: '1080p' },
-    { itag: 18, label: '360p' },
-  ];
+  // Adım 1: Hangi instancetan API yanıtı alabiliyoruz ve hangi itag'ler mevcut?
+  let bestItags = null;
+  let workingInstance = null;
 
-  for (const { itag, label } of itagList) {
-    // Tüm instanceları paralel dene, ilk çalışanı al
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const apiUrl = `${instance}/api/v1/videos/${videoId}?fields=formatStreams`;
+      console.log(`🔍 Invidious API: ${instance}`);
+      const data = await httpsGetJson(apiUrl, 8000);
+      const streams = (data.formatStreams || []).filter(s => s.itag && s.url);
+      if (streams.length === 0) continue;
+      // Kalite önceliği: 1080p (itag 37/299) → 720p (itag 22/298) → 480p → 360p (itag 18)
+      const qualityOrder = [37, 299, 22, 298, 59, 78, 18];
+      bestItags = qualityOrder.filter(t => streams.some(s => String(s.itag) === String(t)));
+      if (bestItags.length === 0) bestItags = streams.map(s => s.itag);
+      workingInstance = instance;
+      console.log(`✅ Invidious API ${instance}: itag'ler: ${bestItags.join(',')}`);
+      break;
+    } catch (e) {
+      console.log(`⚠️ Invidious API ${instance}: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  if (!bestItags || bestItags.length === 0) {
+    // API yanıt vermedi — kör deneme (itag 22 ve 18)
+    console.log('⚠️ Invidious API başarısız, kör itag denemesi yapılıyor...');
+    bestItags = [22, 18];
+  }
+
+  // Adım 2: Her itag için tüm instanceları paralel dene
+  for (const itag of bestItags) {
+    const instances = workingInstance
+      ? [workingInstance, ...INVIDIOUS_INSTANCES.filter(i => i !== workingInstance)]
+      : INVIDIOUS_INSTANCES;
+
     const result = await Promise.any(
-      INVIDIOUS_INSTANCES.map(instance =>
+      instances.map(instance =>
         (async () => {
           const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=${itag}&local=true`;
           const tmpDir = path.join(os.tmpdir(), `inv_${Date.now()}_${Math.random().toString(36).slice(2)}`);
           try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
           const filePath = path.join(tmpDir, 'video.mp4');
-          console.log(`🔍 Invidious proxy: ${instance} (itag:${itag} ${label})`);
           await httpsDownloadToFile(proxyUrl, filePath, MAX_VIDEO_SIZE_BYTES, instance, 120000);
           const stat = fs.statSync(filePath);
           if (stat.size < 100000) throw new Error(`Çok küçük: ${stat.size} byte`);
-          console.log(`✅ Invidious başarılı: ${instance} (${label}, ${Math.round(stat.size/1024/1024)}MB)`);
+          console.log(`✅ Invidious ${instance} itag:${itag} → ${Math.round(stat.size/1024/1024)}MB`);
           return filePath;
-        })().catch(e => { console.log(`⚠️ ${instance} itag:${itag}: ${e.message?.slice(0,50)}`); throw e; })
+        })().catch(e => { console.log(`⚠️ itag:${itag} ${instance}: ${e.message?.slice(0,40)}`); throw e; })
       )
     ).catch(() => null);
 
     if (result) return result;
-    console.log(`⚠️ itag ${itag} (${label}) tüm instancelarda başarısız, sonraki deneniyor...`);
+    console.log(`⚠️ itag ${itag} başarısız, sonraki deniyor...`);
   }
 
-  console.error('❌ Invidious: tüm itag ve instance kombinasyonları başarısız');
+  console.error('❌ Invidious: tüm itag/instance kombinasyonları başarısız');
   return null;
 }
 
@@ -1486,10 +1540,11 @@ async function publishNextNews() {
     return;
   }
 
-  // ── Normal haber — medyalı öğe bul (max 5 deneme) ─────────────────────────
-  const MAX_TRIES = 5;
+  // ── Normal haber — medyalı öğe bul (max 10 deneme) ────────────────────────
+  const MAX_TRIES = 10;
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
+  let chosenMedia2 = null;  // İkinci görsel (media group için)
   let chosenOgDesc = null;
   let chosenArticleBody = null;
 
@@ -1500,36 +1555,41 @@ async function publishNextNews() {
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
 
-    // Her haber için direkt .mp4 URL ara (sadece video modunda değil, her zaman)
+    // Web sayfasından video çıkar (her zaman dene)
     if (!media.url || media.type !== 'video') {
       const webVid = await fetchArticleHtmlAndExtractVideo(candidateUrl);
-      if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Direkt video bulundu: ${webVid.slice(0, 60)}`); }
+      if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Web video: ${webVid.slice(0, 60)}`); }
     }
 
-    if (!media.url) {
-      console.log(`🔍 og:meta aranıyor (${i+1}. deneme)...`);
-      const ogMeta = await fetchOgMeta(candidateUrl);
-      if (ogMeta.image) media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
-      if (ogMeta.description) chosenOgDesc = ogMeta.description;
-      if (ogMeta.articleBody) chosenArticleBody = ogMeta.articleBody;
-    } else {
-      fetchOgMeta(candidateUrl).then(ogMeta => {
-        if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
-        if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
-      }).catch(() => {});
+    // OG meta çek (görsel + açıklama + 2. görsel)
+    const ogMeta = await fetchOgMeta(candidateUrl);
+    if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
+    if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
+
+    if (!media.url && ogMeta.image) {
+      media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
+    }
+
+    // İkinci görsel topla (aynı haberden)
+    if (media.type === 'image' && !chosenMedia2 && ogMeta.image2) {
+      chosenMedia2 = upgradeImageUrl(ogMeta.image2);
     }
 
     if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
   }
 
-  // 4) DuckDuckGo görseli — DEVRE DIŞI (alakasız görseller çekiyor)
-  // DuckDuckGo araması atlandı — sadece haberle ilgili görseller kullanılıyor
-
-  // 5) Wikipedia görseli — DEVRE DIŞI (alakasız görseller gelebiliyor)
-  // Görsel bulunamazsa haber sadece metin olarak gönderilecek
-  if (!chosenMedia.url) {
+  // Wikipedia görseli — görsel bulunamadıysa son çare
+  if (!chosenMedia.url && validItems.length > 0) {
     chosenItem = chosenItem || validItems[0];
-    chosenMedia = { type: null, url: null };
+    const { title: wikiTitle } = buildItemMeta(chosenItem, feed);
+    console.log(`🔎 Wikipedia görseli aranıyor...`);
+    const wikiImg = await fetchSubjectImage(wikiTitle);
+    if (wikiImg) {
+      chosenMedia = { type: 'image', url: wikiImg };
+      console.log(`🖼 Wikipedia görseli kullanılıyor`);
+    } else {
+      chosenMedia = { type: null, url: null };
+    }
   }
 
   if (!chosenItem) return;
@@ -1578,29 +1638,60 @@ async function publishNextNews() {
   try {
     if (chosenMedia.type === 'video') {
       const webSent = await sendWebVideo(CHANNEL_ID, chosenMedia.url, caption, replyToId);
-      if (webSent) { sentType = 'video'; }
-      else {
-        // Web video indirilemedi — link gönderme, haberi atla
-        console.log('⏭ Web video indirilemedi, haber atlanıyor (link yok)');
-        sentType = 'skip';
+      if (webSent) {
+        sentType = 'video';
+      } else {
+        // Web video başarısız → OG image ile dene
+        console.log('⚠️ Web video başarısız, görsel fallback deneniyor...');
+        const ogMeta2 = await fetchOgMeta(chosenItem.link || chosenItem.guid);
+        const fallbackImg = ogMeta2.image ? upgradeImageUrl(ogMeta2.image) : null;
+        if (fallbackImg) {
+          try {
+            sentMsg = await bot.sendPhoto(CHANNEL_ID, fallbackImg, sendOpts({ caption }));
+            sentType = 'image';
+            console.log('🖼 Video yerine görsel gönderildi');
+          } catch { sentType = 'skip'; }
+        } else {
+          sentType = 'skip';
+          console.log('⏭ Görsel de yok, haber atlanıyor');
+        }
       }
     } else if (chosenMedia.type === 'image') {
-      sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
-      sentType = 'image';
+      // İki görsel varsa media group gönder
+      if (chosenMedia2) {
+        try {
+          const mediaGroup = [
+            { type: 'photo', media: chosenMedia.url, caption, parse_mode: undefined },
+            { type: 'photo', media: chosenMedia2 },
+          ];
+          const msgs = await bot.sendMediaGroup(CHANNEL_ID, mediaGroup, replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {});
+          sentMsg = msgs?.[0] || null;
+          sentType = 'image';
+          console.log('📸📸 İki görsel (media group) gönderildi');
+        } catch {
+          // Media group başarısız → tek görsel
+          sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
+          sentType = 'image';
+        }
+      } else {
+        sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
+        sentType = 'image';
+      }
     } else {
-      // Sadece metin — link içermiyorsa gönder
-      const safeCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim();
-      if (safeCaption.length > 5) {
-        sentMsg = await bot.sendMessage(CHANNEL_ID, safeCaption, sendOpts({ disable_web_page_preview: true }));
-        sentType = 'text';
+      // Medya yok — Wikipedia ile son deneme
+      const wikiImg2 = await fetchSubjectImage(title);
+      if (wikiImg2) {
+        sentMsg = await bot.sendPhoto(CHANNEL_ID, wikiImg2, sendOpts({ caption }));
+        sentType = 'image';
+        console.log('🖼 Sadece Wikipedia görseli gönderildi');
       } else {
         sentType = 'skip';
+        console.log('⏭ Hiç medya bulunamadı, haber atlanıyor');
       }
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
     console.error(`❌ Gönderme hatası (${chosenMedia.type}): ${err.message}`);
-    // Hata durumunda link gönderme — haberi atla
     sentType = 'skip';
   }
 
