@@ -1223,7 +1223,7 @@ async function fetchFeed(feed) {
 
 function isWithinPublishHours() {
   const now = new Date();
-  const hour = now.getHours();
+  const hour = (now.getUTCHours() + 3) % 24; // Railway UTC'de çalışır — Türkiye UTC+3
   const start = settings.publishStartHour ?? 9;
   const end = settings.publishEndHour ?? 2;
   if (start <= end) return hour >= start && hour < end;
