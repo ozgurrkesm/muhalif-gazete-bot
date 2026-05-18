@@ -1800,168 +1800,379 @@ let lastBreakingNewsTime = 0;
 const BREAKING_MIN_GAP_MS = 90 * 1000; // İki son dakika arası min 90 sn
 
   
-  // ─── Google News Redirect Çözücü ─────────────────────────────────────────────
-  function resolveGoogleNewsUrl(googleUrl, depth) {
-    depth = depth || 0;
-    if (depth > 5) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      let settled = false;
-      const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-      const timer = setTimeout(() => done(null), 8000);
-      const req = https.get(googleUrl, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'text/html' },
-      }, (res) => {
-        clearTimeout(timer);
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.destroy();
-          const loc = res.headers.location;
-          resolveGoogleNewsUrl(loc.startsWith('http') ? loc : `https://news.google.com${loc}`, depth + 1).then(done);
-          return;
-        }
-        let html = '';
-        res.on('data', (c) => { html += c; if (html.length > 30000) res.destroy(); });
-        res.on('end', () => {
-          const metaRefresh = html.match(/content=["'][^"']*url=([^"']+)["']/i)?.[1];
-          if (metaRefresh && metaRefresh.startsWith('http')) return done(metaRefresh);
-          const canonical = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1];
-          if (canonical && !canonical.includes('news.google.com')) return done(canonical);
-          done(null);
-        });
-        res.on('error', () => done(null));
+  
+// ─── Google News Redirect Çözücü ─────────────────────────────────────────────
+function resolveGoogleNewsUrl(googleUrl, depth) {
+  depth = depth || 0;
+  if (depth > 6) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const timer = setTimeout(() => done(null), 9000);
+    const req = https.get(googleUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'text/html,application/xhtml+xml' },
+    }, (res) => {
+      clearTimeout(timer);
+      if ((res.statusCode >= 300 && res.statusCode < 400) && res.headers.location) {
+        res.destroy();
+        const loc = res.headers.location;
+        resolveGoogleNewsUrl(loc.startsWith('http') ? loc : `https://news.google.com${loc}`, depth + 1).then(done);
+        return;
+      }
+      let html = '';
+      res.on('data', (c) => { html += c; if (html.length > 40000) res.destroy(); });
+      res.on('end', () => {
+        const metaUrl = html.match(/content=["'][^"']*url=([^"'&]+)/i)?.[1];
+        if (metaUrl && metaUrl.startsWith('http') && !metaUrl.includes('google.com')) return done(decodeURIComponent(metaUrl));
+        const canonical = html.match(/<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i)?.[1];
+        if (canonical && !canonical.includes('news.google.com')) return done(canonical);
+        const jsUrl = html.match(/window\.location(?:\.href)?\s*=\s*["']([^"']+)["']/)?.[1];
+        if (jsUrl && jsUrl.startsWith('http') && !jsUrl.includes('news.google.com')) return done(jsUrl);
+        done(null);
       });
-      req.on('error', () => { clearTimeout(timer); done(null); });
-      req.setTimeout(7000, () => { req.destroy(); clearTimeout(timer); done(null); });
+      res.on('error', () => done(null));
     });
+    req.on('error', () => { clearTimeout(timer); done(null); });
+    req.setTimeout(8000, () => { req.destroy(); clearTimeout(timer); done(null); });
+  });
+}
+
+// ─── Makale HTML'inden YouTube Video ID'lerini Çıkar ─────────────────────────
+function extractYouTubeIdsFromHtml(html) {
+  if (!html) return [];
+  const ids = new Set();
+  const patterns = [
+    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/g,
+    /youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/g,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/g,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/g,
+    /"videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"/g,
+    /data-video-id=["']([a-zA-Z0-9_-]{11})["']/g,
+  ];
+  for (const re of patterns) {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(html)) !== null) {
+      if (m[1] && m[1].length === 11) ids.add(m[1]);
+    }
+  }
+  return [...ids].slice(0, 3);
+}
+
+// ─── Ham HTML Çekici (tam redirect desteği) ───────────────────────────────────
+function fetchArticleHtmlRaw(url, redirectCount) {
+  redirectCount = redirectCount || 0;
+  if (redirectCount > 5) return Promise.resolve('');
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v || ''); } };
+    const timer = setTimeout(() => done(''), 10000);
+    const mod = url.startsWith('https') ? https : http;
+    const req = mod.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+      },
+    }, (res) => {
+      clearTimeout(timer);
+      if ((res.statusCode >= 300 && res.statusCode < 400) && res.headers.location) {
+        res.destroy();
+        fetchArticleHtmlRaw(res.headers.location, redirectCount + 1).then(done);
+        return;
+      }
+      let html = '';
+      res.on('data', (c) => { html += c; if (html.length > 150000) res.destroy(); });
+      res.on('end', () => done(html));
+      res.on('error', () => done(''));
+    });
+    req.on('error', () => { clearTimeout(timer); done(''); });
+    req.setTimeout(9000, () => { req.destroy(); clearTimeout(timer); done(''); });
+  });
+}
+
+// ─── Gelişmiş Web Video Çıkarıcı (Türk haber sitelerine özel) ────────────────
+function extractWebVideoEnhanced(html) {
+  if (!html) return null;
+
+  // 1. og:video meta tag
+  const ogVideo =
+    html.match(/<meta[^>]+property=["']og:video(?::url)?["'][^>]+content=["']([^"']+)["']/i)?.[1] ||
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video(?::url)?["']/i)?.[1];
+  if (ogVideo && /\.(mp4|webm|m3u8)/i.test(ogVideo)) return ogVideo;
+
+  // 2. <video> / <source> tag
+  const videoSrc =
+    html.match(/<video[^>]+src=["']([^"']+\.(?:mp4|webm|m3u8))["']/i)?.[1] ||
+    html.match(/<source[^>]+src=["']([^"']+\.(?:mp4|webm|m3u8))["']/i)?.[1];
+  if (videoSrc) return videoSrc;
+
+  // 3. JSON player config (JW Player, Flowplayer, Videojs)
+  const jsonVid =
+    html.match(/"(?:videoUrl|video_url|hlsUrl|hls_url|streamUrl|manifestUrl|mp4Url|file|src)"\s*:\s*"(https?:\/\/[^"]+\.(?:mp4|m3u8|webm)[^"]*)"/i)?.[1] ||
+    html.match(/'(?:videoUrl|video_url|hlsUrl|file|src)'\s*:\s*'(https?:\/\/[^']+\.(?:mp4|m3u8)[^']*)'/i)?.[1] ||
+    html.match(/file\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8))["']/i)?.[1] ||
+    html.match(/source\s*:\s*["'](https?:\/\/[^"']+\.(?:mp4|m3u8))["']/i)?.[1];
+  if (jsonVid) return jsonVid;
+
+  // 4. data-* attributes
+  const dataVid =
+    html.match(/data-(?:video-url|mp4|hls|stream|src|file)=["'](https?:\/\/[^"']+\.(?:mp4|m3u8))["']/i)?.[1] ||
+    html.match(/data-src=["']([^"']+\.(?:mp4|webm|m3u8))["']/i)?.[1];
+  if (dataVid) return dataVid;
+
+  // 5. CDN URL'leri (Turkish news CDNs)
+  const cdnVid =
+    html.match(/["'](https?:\/\/(?:cdn|medya|video|stream|vod|content|media)[^"']*\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/i)?.[1] ||
+    html.match(/["'](https?:\/\/[^"']*\/(?:video|stream|vod)\/[^"']*\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/i)?.[1] ||
+    html.match(/["'](https?:\/\/[^"']{10,400}\.(?:mp4|m3u8))["']/i)?.[1];
+  if (cdnVid && cdnVid.length < 600) return cdnVid;
+
+  // 6. Dailymotion / Vimeo embed → döndür, yt-dlp indirir
+  const dm = html.match(/dailymotion\.com\/embed\/video\/([a-zA-Z0-9]+)/i);
+  if (dm) return `https://www.dailymotion.com/video/${dm[1]}`;
+
+  const vimeo = html.match(/player\.vimeo\.com\/video\/(\d+)/i);
+  if (vimeo) return `https://vimeo.com/${vimeo[1]}`;
+
+  return null;
+}
+
+// ─── Genel URL için yt-dlp (1000+ platform) ──────────────────────────────────
+async function downloadGenericWithYtdlp(pageUrl) {
+  const tmpDir = path.join(os.tmpdir(), `generic_${Date.now()}`);
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+  const outputTpl = path.join(tmpDir, 'video.%(ext)s');
+
+  return new Promise((resolve) => {
+    const args = [
+      '--no-playlist',
+      '--max-filesize', '48m',
+      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio/best[height<=1080]/best',
+      '--merge-output-format', 'mp4',
+      '--no-part',
+      '--socket-timeout', '60',
+      '--no-check-certificate',
+      '--geo-bypass',
+      '--match-filter', 'duration < 600',
+      '--extractor-retries', '2',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '-o', outputTpl,
+      '--no-warnings',
+      '--quiet',
+      pageUrl,
+    ];
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); }
+    catch { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+
+    const killTimer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      resolve(null);
+    }, 90000);
+
+    proc.on('error', () => { clearTimeout(killTimer); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); });
+    proc.on('close', (exitCode) => {
+      clearTimeout(killTimer);
+      if (exitCode !== 0) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+      try {
+        const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
+        if (!files.length) { resolve(null); return; }
+        const fullPath = path.join(tmpDir, files[0]);
+        const stat = fs.statSync(fullPath);
+        if (stat.size < 100000) { try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} resolve(null); return; }
+        console.log(`✅ yt-dlp generic: ${files[0]} (${Math.round(stat.size / 1024 / 1024)}MB)`);
+        resolve(fullPath);
+      } catch { resolve(null); }
+    });
+  });
+}
+
+// ─── YouTube Başlık Araması (Invidious) ──────────────────────────────────────
+async function searchYouTubeByTitle(title) {
+  const query = title.slice(0, 80).replace(/[<>"{}|^[`]/g, ' ').trim();
+  for (const instance of INVIDIOUS_INSTANCES.slice(0, 5)) {
+    try {
+      const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort_by=relevance&page=1`;
+      const results = await httpsGetJson(url, 8000);
+      if (!Array.isArray(results) || results.length === 0) continue;
+      const pick = results.slice(0, 5).find(r => r.videoId && (r.lengthSeconds || 0) > 10 && (r.lengthSeconds || 9999) < 600);
+      if (pick && pick.videoId) {
+        console.log(`🔍 YouTube arama: "${query.slice(0, 40)}" → ${pick.videoId}`);
+        return pick.videoId;
+      }
+    } catch { /* sonraki instance */ }
+  }
+  return null;
+}
+
+// ─── Son Dakika Ana Fonksiyonu (7 Kademeli Video Sistemi) ────────────────────
+async function checkBreakingNews() {
+  if (settings.paused) return;
+
+  const nowMs = Date.now();
+  if (nowMs - lastBreakingNewsTime < BREAKING_MIN_GAP_MS) {
+    const rem = Math.round((BREAKING_MIN_GAP_MS - (nowMs - lastBreakingNewsTime)) / 1000);
+    console.log(`⏳ Son dakika bekleniyor: ${rem}sn kaldı`);
+    return;
   }
 
-  // ─── YouTube Başlık Araması ───────────────────────────────────────────────────
-  async function searchYouTubeByTitle(title) {
-    const query = title.slice(0, 80).replace(/[^\w\s\u00C0-\u024F]/g, ' ').trim();
-    for (const instance of INVIDIOUS_INSTANCES.slice(0, 4)) {
-      try {
-        const url = `${instance}/api/v1/search?q=${encodeURIComponent(query)}&type=video&sort_by=relevance&page=1`;
-        const results = await httpsGetJson(url, 8000);
-        if (!Array.isArray(results) || results.length === 0) continue;
-        const pick = results.slice(0, 3).find(r => r.videoId && (r.lengthSeconds || 0) < 600);
-        if (pick && pick.videoId) {
-          console.log(`🔍 YouTube arama: "${query.slice(0, 40)}" → ${pick.videoId}`);
-          return pick.videoId;
-        }
-      } catch { /* sonraki instance */ }
-    }
-    return null;
-  }
+  for (const feed of BREAKING_NEWS_FEEDS) {
+    try {
+      const items = await fetchFeed(feed);
+      const newItems = items.filter(item => {
+        const url = item.link || item.guid;
+        return url && !publishedUrls.has(url) && isValidNewsItem(item, feed) && isBreakingNews(item.title || '');
+      });
 
-  async function checkBreakingNews() {
-    if (settings.paused) return;
+      for (const item of newItems.slice(0, 1)) {
+        const url = item.link || item.guid;
+        const { title: checkTitle } = buildItemMeta(item, feed);
+        if (isTitleDuplicate(checkTitle)) continue;
 
-    // Ard arda gönderimi engelle — son gönderimden 90sn geçmemişse atla
-    const nowMs = Date.now();
-    if (nowMs - lastBreakingNewsTime < BREAKING_MIN_GAP_MS) {
-      const remaining = Math.round((BREAKING_MIN_GAP_MS - (nowMs - lastBreakingNewsTime)) / 1000);
-      console.log(`⏳ Son dakika bekleniyor (${remaining}sn kaldı)`);
-      return;
-    }
+        publishedUrls.add(url);
+        persistPublishedUrls();
+        lastBreakingNewsTime = Date.now();
 
-    for (const feed of BREAKING_NEWS_FEEDS) {
-      try {
-        const items = await fetchFeed(feed);
-        const newItems = items.filter(item => {
-          const url = item.link || item.guid;
-          return url && !publishedUrls.has(url) && isValidNewsItem(item, feed) && isBreakingNews(item.title || '');
-        });
+        const { title, rawDesc } = buildItemMeta(item, feed);
+        const aiSummary = await summarizeNews(title, rawDesc);
+        const categoryTag = detectCategory(title, rawDesc);
+        const catEmoji = categoryTag ? `${categoryTag} ` : '';
 
-        for (const item of newItems.slice(0, 1)) {
-          const url = item.link || item.guid;
-          const { title: checkTitle } = buildItemMeta(item, feed);
-          if (isTitleDuplicate(checkTitle)) continue;
+        let caption = `🚨 SON DAKİKA\n\n${catEmoji}${title}`;
+        if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
+        if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
-          publishedUrls.add(url);
-          persistPublishedUrls();
-          lastBreakingNewsTime = Date.now();
+        let sentMsg = null;
+        let sentType = 'text';
 
-          const { title, rawDesc } = buildItemMeta(item, feed);
-          const aiSummary = await summarizeNews(title, rawDesc);
-          const categoryTag = detectCategory(title, rawDesc);
-          const catEmoji = categoryTag ? `${categoryTag} ` : '';
+        try {
+          // ═══ Adım 1: Google News → gerçek makale URL ══════════════════════
+          let realUrl = url;
+          if (url.includes('news.google.com')) {
+            console.log('🔗 Google News redirect çözülüyor...');
+            realUrl = (await resolveGoogleNewsUrl(url)) || url;
+            console.log(`🔗 Gerçek URL: ${realUrl.slice(0, 100)}`);
+          }
 
-          let caption = `🚨 SON DAKİKA\n\n${catEmoji}${title}`;
-          if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
-          if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+          // ═══ Adım 2: Makale HTML'ini çek (tüm video adımları için ortak) ══
+          console.log(`🌐 HTML çekiliyor: ${realUrl.slice(0, 70)}...`);
+          const articleHtml = await fetchArticleHtmlRaw(realUrl);
+          console.log(`📄 HTML boyutu: ${articleHtml.length} karakter`);
 
-          let sentMsg = null;
-          let sentType = 'text';
-
-          try {
-            // Adım 1: Google News ise gerçek makale URL'sine çöz
-            let realUrl = url;
-            if (url.includes('news.google.com')) {
-              realUrl = (await resolveGoogleNewsUrl(url)) || url;
-              console.log(`🔗 Gerçek URL: ${realUrl.slice(0, 80)}`);
+          // ═══ Adım 3: HTML'den gelişmiş video URL çıkar ════════════════════
+          if (sentType !== 'video' && articleHtml) {
+            const directVideoUrl = extractWebVideoEnhanced(articleHtml);
+            if (directVideoUrl) {
+              console.log(`🎬 Direkt video bulundu: ${directVideoUrl.slice(0, 80)}`);
+              const ok = await sendWebVideo(CHANNEL_ID, directVideoUrl, caption, null);
+              if (ok) { sentType = 'video'; mediaStats.video++; console.log('🚨🎬 SON DAKİKA direkt video'); }
             }
+          }
 
-            // Adım 2: Sayfadan direkt video ara ve gönder
-            const webVideoUrl = await fetchArticleHtmlAndExtractVideo(realUrl);
-            if (webVideoUrl) {
-              console.log(`🎬 Video bulundu: ${webVideoUrl.slice(0, 80)}`);
-              const ok = await sendWebVideo(CHANNEL_ID, webVideoUrl, caption, null);
-              if (ok) { sentType = 'video'; mediaStats.video++; console.log(`🚨🎬 SON DAKİKA video`); }
-            }
-
-            // Adım 3: Video yoksa Invidious ile YouTube'da ara
-            if (sentType !== 'video') {
-              const ytId = await searchYouTubeByTitle(title);
-              if (ytId) {
+          // ═══ Adım 4: HTML'den YouTube iframe ID çıkar ═════════════════════
+          if (sentType !== 'video' && articleHtml) {
+            const ytIds = extractYouTubeIdsFromHtml(articleHtml);
+            if (ytIds.length > 0) {
+              console.log(`▶️ Makalede ${ytIds.length} YouTube ID: ${ytIds.join(', ')}`);
+              for (const ytId of ytIds) {
                 const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
                 if (ytPath) {
                   try {
                     await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
                     sentType = 'video'; mediaStats.video++;
-                    console.log(`🚨▶️ SON DAKİKA YouTube: ${title.slice(0, 50)}`);
-                  } catch { /* resme düş */ }
+                    console.log(`🚨▶️ SON DAKİKA YouTube embed: ${ytId}`);
+                  } catch (e) { console.error(`❌ YouTube embed: ${e.message}`); }
                   try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
+                  if (sentType === 'video') break;
                 }
               }
             }
-
-            // Adım 4: Video yoksa Full HD resim gönder
-            if (sentType !== 'video') {
-              const [ogMeta, rssMedia] = await Promise.all([fetchOgMeta(realUrl), Promise.resolve(extractMedia(item))]);
-              if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
-
-              const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
-              const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
-
-              if (img1 && img2) {
-                try {
-                  const msgs = await bot.sendMediaGroup(CHANNEL_ID, [{ type: 'photo', media: img1, caption }, { type: 'photo', media: img2 }]);
-                  sentMsg = msgs && msgs[0] ? msgs[0] : null; sentType = 'image'; mediaStats.image++;
-                } catch {
-                  try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
-                }
-              } else if (img1) {
-                try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; }
-                catch { sentMsg = await bot.sendMessage(CHANNEL_ID, caption); sentType = 'text'; mediaStats.text++; }
-              } else {
-                sentMsg = await bot.sendMessage(CHANNEL_ID, caption); sentType = 'text'; mediaStats.text++;
-              }
-            }
-
-            const pinId = sentMsg && sentMsg.message_id ? sentMsg.message_id : null;
-            if (pinId) { registerSentMessage(pinId, title); await tryPin(pinId); }
-            console.log(`✅ [Son Dakika] [${sentType}] ${title.slice(0, 60)}`);
-            await notifyFilterUsers(title, rawDesc, url);
-            return; // Her turda 1 haber yay
-
-          } catch (err) {
-            console.error(`❌ Son dakika hatası: ${err.message}`);
           }
+
+          // ═══ Adım 5: yt-dlp ile makale sayfasını tara (1000+ platform) ════
+          if (sentType !== 'video' && !realUrl.includes('news.google.com')) {
+            console.log(`⬇️ yt-dlp deneniyor: ${realUrl.slice(0, 70)}...`);
+            const genericPath = await downloadGenericWithYtdlp(realUrl);
+            if (genericPath) {
+              try {
+                await bot.sendVideo(CHANNEL_ID, { source: genericPath }, { caption, supports_streaming: true });
+                sentType = 'video'; mediaStats.video++;
+                console.log('🚨🎬 SON DAKİKA yt-dlp generic');
+              } catch (e) { console.error(`❌ yt-dlp generic: ${e.message}`); }
+              try { fs.rmSync(path.dirname(genericPath), { recursive: true, force: true }); } catch {}
+            }
+          }
+
+          // ═══ Adım 6: Invidious ile YouTube'da başlıkla ara ════════════════
+          if (sentType !== 'video') {
+            console.log(`🔍 YouTube aranıyor: ${title.slice(0, 50)}...`);
+            const ytId = await searchYouTubeByTitle(title);
+            if (ytId) {
+              const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
+              if (ytPath) {
+                try {
+                  await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
+                  sentType = 'video'; mediaStats.video++;
+                  console.log(`🚨▶️ SON DAKİKA YouTube arama: ${ytId}`);
+                } catch (e) { console.error(`❌ YouTube arama: ${e.message}`); }
+                try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
+              }
+            }
+          }
+
+          // ═══ Adım 7: Video bulunamadı → Full HD resim gönder ══════════════
+          if (sentType !== 'video') {
+            console.log('📸 Video yok, Full HD resim gönderiliyor...');
+            const [ogMeta, rssMedia] = await Promise.all([fetchOgMeta(realUrl), Promise.resolve(extractMedia(item))]);
+            if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+
+            const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+            const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
+
+            if (img1 && img2) {
+              try {
+                const msgs = await bot.sendMediaGroup(CHANNEL_ID, [
+                  { type: 'photo', media: img1, caption },
+                  { type: 'photo', media: img2 },
+                ]);
+                sentMsg = (msgs && msgs[0]) ? msgs[0] : null;
+                sentType = 'image'; mediaStats.image++;
+                console.log('🚨📸📸 SON DAKİKA çift resim');
+              } catch {
+                try { sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
+              }
+            } else if (img1) {
+              try {
+                sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption });
+                sentType = 'image'; mediaStats.image++;
+                console.log('🚨📸 SON DAKİKA tek resim');
+              } catch {
+                sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
+                sentType = 'text'; mediaStats.text++;
+              }
+            } else {
+              sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
+              sentType = 'text'; mediaStats.text++;
+            }
+          }
+
+          const pinId = (sentMsg && sentMsg.message_id) ? sentMsg.message_id : null;
+          if (pinId) { registerSentMessage(pinId, title); await tryPin(pinId); }
+          console.log(`✅ [Son Dakika] [${sentType}] ${title.slice(0, 60)}`);
+          await notifyFilterUsers(title, rawDesc, url);
+          return; // Her turda 1 haber — döngüden çık
+
+        } catch (err) {
+          console.error(`❌ Son dakika hatası: ${err.message}`);
         }
-      } catch { /* feed hatası — sessizce geç */ }
-    }
+      }
+    } catch { /* feed hatası — sessizce geç */ }
   }
-  
-  function startBreakingNewsChecker() {
+}
+
+function startBreakingNewsChecker() {
     if (breakingNewsInterval) clearInterval(breakingNewsInterval);
     breakingNewsInterval = setInterval(checkBreakingNews, BREAKING_INTERVAL_MS);
     console.log(`🚨 Son dakika tarayıcısı aktif (her ${BREAKING_INTERVAL_MS / 1000} saniyede bir)`);
