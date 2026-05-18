@@ -538,6 +538,26 @@ function isGarbageText(text) {
   return false;
 }
 
+function detectCategory(title, description) {
+  const text = `${title} ${description || ''}`.toLowerCase();
+  const cats = [
+    { tag: '⚽ Spor',       words: ['futbol','maç','gol','transfer','fenerbahçe','galatasaray','beşiktaş','trabzonspor','milli takım','süper lig','basketbol','tenis','formula','olimpiyat','şampiyon','teknik direktör','taraftar','lig','kulüp','atlet','maraton','yüzme','voleybol'] },
+    { tag: '🏛 Siyaset',    words: ['cumhurbaşkanı','erdoğan','meclis','hükümet','bakan','chp','akp','mhp','hdp','dip','parti','muhalefet','seçim','milletvekili','tbmm','anayasa','siyasi','muhalif','oy','sandık','koalisy'] },
+    { tag: '💰 Ekonomi',    words: ['dolar','euro','faiz','enflasyon','tcmb','borsa','bist','merkez bankası','ihracat','ithalat','büyüme','gdp','bütçe','vergi','işsizlik','ticaret','piyasa','hisse','altın','döviz','kredi','hazine'] },
+    { tag: '🌍 Dünya',      words: ['ukrayna','rusya','abd','ab','nato','bm','suriye','gazze','israil','filistin','irak','iran','çin','almanya','fransa','ingiltere','putin','biden','trump','savaş','uluslararası','yabancı','küresel'] },
+    { tag: '💻 Teknoloji',  words: ['yapay zeka','ai','teknoloji','yazılım','donanım','uygulama','sosyal medya','twitter','instagram','google','apple','meta','microsoft','iphone','android','siber','uzay','roket','satellite','5g','kripto','bitcoin'] },
+    { tag: '🎬 Magazin',    words: ['magazin','dizi','film','oyuncu','şarkıcı','sanatçı','konser','albüm','moda','manken','ödül','oscar','grammy','ünlü','çift','ayrılık','evlilik','nişan','sevgili','skandal'] },
+    { tag: '🚨 Asayiş',     words: ['cinayet','hırsızlık','dolandırıcılık','terör','bomba','saldırı','gözaltı','tutuklama','mahkeme','yargı','savcı','polis','jandarma','uyuşturucu','kaçakçılık','kaza','deprem','yangın','sel','afet'] },
+    { tag: '🏥 Sağlık',     words: ['sağlık','hastane','doktor','ilaç','aşı','hastalık','covid','kanser','pandemi','salgın','tedavi','ameliyat','eczane','klinik','bakan sağlık'] },
+    { tag: '🎓 Eğitim',     words: ['okul','üniversite','öğrenci','öğretmen','meb','yks','lgs','sınav','burs','mezun','eğitim','müfredat','akademik','rektör'] },
+    { tag: '🌿 Çevre',      words: ['iklim','çevre','orman','yangın','küresel ısınma','karbon','yenilenebilir','solar','rüzgar','doğa','çevre kirliliği','deniz','hayvan'] },
+  ];
+  for (const { tag, words } of cats) {
+    if (words.some(w => text.includes(w))) return tag;
+  }
+  return null;
+}
+
 async function summarizeNews(title, description, articleBody = null) {
   const rawText = (description || '').trim();
   const inputText = isGarbageText(rawText) ? '' : rawText;
@@ -1116,8 +1136,10 @@ async function publishNextNews() {
 
     const { title, rawDesc, sonDakika, prefix } = buildItemMeta(item, feed);
     const aiSummary = await summarizeNews(title, rawDesc);
+    const categoryTag = detectCategory(title, rawDesc);
     let caption = `${prefix}▶️ ${title}`;
     if (aiSummary && aiSummary.length > 5) caption += `\n\n${aiSummary}`;
+    if (categoryTag) caption += `\n\n${categoryTag}`;
     if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
     const replyToId = findRelatedMessageId(title);
@@ -1253,9 +1275,14 @@ async function publishNextNews() {
   const bestDesc = chosenOgDesc || description || rawDesc;
   const aiSummary = await summarizeNews(title, bestDesc, chosenArticleBody);
 
+  const categoryTag = detectCategory(title, bestDesc);
+
   let caption = `${prefix}📰 ${title}`;
   if (aiSummary && aiSummary.length > 5) {
     caption += `\n\n${aiSummary}`;
+  }
+  if (categoryTag) {
+    caption += `\n\n${categoryTag}`;
   }
 
   // Telegram caption limiti: 1024 karakter
