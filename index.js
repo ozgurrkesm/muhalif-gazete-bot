@@ -914,12 +914,17 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
     const args = [
       '--no-playlist',
       '--max-filesize', '48m',
-      // Önce ses+video birlikte mp4, yoksa en iyi format
-      '-f', 'best[ext=mp4][height<=1080]/best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+      // 720p mp4 öncelikli — ses+video birleşik, yoksa en iyi
+      '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
+      '--no-playlist',
+      '--extractor-retries', '3',
+      '--socket-timeout', '30',
+      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       '-o', outputTemplate,
       '--no-warnings',
+      '--quiet',
       videoUrl,
     ];
 
@@ -1113,42 +1118,36 @@ async function publishNextNews() {
     let sentMsg = null;
     let sentType = 'image';
 
-    // YouTube için: maxresdefault.jpg (1280x720, 16:9) + ▶️ İzle butonu
-    // yt-dlp yerine bu yöntem kullan — hem hızlı hem stabil hem tam kalite
     const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
-    const watchKeyboard = {
-      inline_keyboard: [[{ text: '▶️ İzle', url }]],
-    };
 
-    // Thumbnail URL'leri sırayla dene (maxres → hq → mq)
-    const thumbCandidates = videoId ? [
-      `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
-      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-    ] : (thumbUrl ? [thumbUrl] : []);
+    // 1. Önce yt-dlp ile videoyu indir, Telegram'a direkt gönder
+    const videoSent = await sendYoutubeVideo(CHANNEL_ID, url, caption);
+    if (videoSent) {
+      sentType = 'video';
+    } else {
+      // 2. İndirme başarısız → 16:9 maxresdefault thumbnail gönder
+      const thumbCandidates = videoId ? [
+        `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      ] : (thumbUrl ? [thumbUrl] : []);
 
-    let sent = false;
-    for (const tUrl of thumbCandidates) {
-      try {
-        sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, {
-          caption,
-          reply_markup: watchKeyboard,
-          ...replyParam,
-        });
-        sentType = 'image';
-        sent = true;
-        break;
-      } catch {}
-    }
+      let sent = false;
+      for (const tUrl of thumbCandidates) {
+        try {
+          sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption, ...replyParam });
+          sentType = 'image';
+          sent = true;
+          break;
+        } catch {}
+      }
 
-    if (!sent) {
-      try {
-        sentMsg = await bot.sendMessage(CHANNEL_ID, `${caption}\n\n▶️ ${url}`, {
-          disable_web_page_preview: false,
-          ...replyParam,
-        });
-        sentType = 'text';
-      } catch (err) { console.error(`❌ YouTube metin gönderme: ${err.message}`); }
+      if (!sent) {
+        try {
+          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { disable_web_page_preview: true, ...replyParam });
+          sentType = 'text';
+        } catch (err) { console.error(`❌ YouTube metin gönderme: ${err.message}`); }
+      }
     }
 
     if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
