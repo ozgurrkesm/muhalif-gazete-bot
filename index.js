@@ -1032,9 +1032,14 @@ async function sendVideoFile(channelId, filePath, caption) {
     return false;
   }
   console.log(`📤 Telegram'a yükleniyor (${mb}MB)...`);
-  await bot.sendVideo(channelId, fs.createReadStream(filePath), { caption, supports_streaming: true });
-  console.log(`✅ Video yüklendi (${mb}MB)`);
-  return true;
+  try {
+    await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
+    console.log(`✅ Video yüklendi (${mb}MB)`);
+    return true;
+  } catch (uploadErr) {
+    console.error(`❌ Telegram yükleme hatası: ${uploadErr.message}`);
+    return false;
+  }
 }
 
 // yt-dlp ile video indir → dosya yolu döndür
@@ -1188,7 +1193,7 @@ async function sendWebVideo(channelId, videoUrl, caption, replyToId = null) {
 
     const mb = Math.round(stat.size / 1024 / 1024);
     console.log(`📤 Web video indirme tamamlandı (${mb}MB), Telegram'a yükleniyor...`);
-    await bot.sendVideo(channelId, fs.createReadStream(filePath), opts());
+    await bot.sendVideo(channelId, { source: filePath }, opts());
     console.log('✅ Web video dosya olarak gönderildi');
     return true;
   } catch (err) {
@@ -1957,7 +1962,7 @@ bot.onText(/\/video/, async (msg) => {
           if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
           caption = caption.slice(0, 1024);
           try {
-            await bot.sendVideo(CHANNEL_ID, fs.createReadStream(videoPath), { caption, supports_streaming: true });
+            await bot.sendVideo(CHANNEL_ID, { source: videoPath }, { caption, supports_streaming: true });
             publishedUrls.add(url);
             persistPublishedUrls();
             try { fs.rmSync(path.dirname(videoPath), { recursive: true, force: true }); } catch {}
