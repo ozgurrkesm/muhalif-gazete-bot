@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pip install yt-dlp && npm install"
+
+[deploy]
+startCommand = "node index.js"
+restartPolicyType = "always"
