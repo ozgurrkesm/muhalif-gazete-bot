@@ -416,6 +416,15 @@ function isTitleDuplicate(title) {
 let currentFeedIndex = 0;
 
 const mediaStats = { image: 0, video: 0, text: 0 };
+const botStartTime = Date.now();
+const recentErrors = [];
+
+function trackError(context, message) {
+  const entry = `[${new Date().toLocaleTimeString('tr-TR')}] ${context}: ${message}`;
+  recentErrors.unshift(entry);
+  if (recentErrors.length > 5) recentErrors.pop();
+  console.error(`❌ ${entry}`);
+}
 
 function getNeededMediaType() {
   const total = mediaStats.image + mediaStats.video + mediaStats.text;
@@ -2002,7 +2011,66 @@ bot.onText(/\/kaynaklar/, (msg) => {
   bot.sendMessage(msg.chat.id, `📰 Aktif haber kaynakları:\n\n${list}`);
 });
 
+bot.onText(/\/saglik/, async (msg) => {
+  const uptimeMs = Date.now() - botStartTime;
+  const uptimeSec = Math.floor(uptimeMs / 1000);
+  const hours = Math.floor(uptimeSec / 3600);
+  const mins = Math.floor((uptimeSec % 3600) / 60);
+  const secs = uptimeSec % 60;
+  const uptimeStr = hours > 0
+    ? `${hours}sa ${mins}dk`
+    : mins > 0 ? `${mins}dk ${secs}sn` : `${secs}sn`;
+
+  const total = mediaStats.image + mediaStats.video + mediaStats.text;
+  const imgPct  = total ? Math.round(mediaStats.image / total * 100) : 0;
+  const vidPct  = total ? Math.round(mediaStats.video / total * 100) : 0;
+  const txtPct  = total ? Math.round(mediaStats.text  / total * 100) : 0;
+
+  // yt-dlp varlığını kontrol et
+  let ytdlpVersion = 'Bulunamadı ❌';
+  try {
+    const { execSync } = await import('child_process');
+    const ver = execSync(`${YTDLP_BIN} --version 2>/dev/null`, { timeout: 5000 }).toString().trim();
+    ytdlpVersion = ver ? `${ver} ✅` : 'Kurulu ✅';
+  } catch { ytdlpVersion = 'Yüklü değil / erişilemiyor ❌'; }
+
+  // ffmpeg varlığını kontrol et
+  let ffmpegOk = '❌';
+  try {
+    const { execSync } = await import('child_process');
+    execSync('ffmpeg -version', { timeout: 5000 });
+    ffmpegOk = '✅';
+  } catch { ffmpegOk = '❌'; }
+
+  const botStatus = settings.paused ? '⏸ Duraklatıldı' : '✅ Aktif';
+
+  let text = `🩺 *Bot Sağlık Raporu*\n\n`;
+  text += `⚡ Durum: ${botStatus}\n`;
+  text += `⏱ Çalışma süresi: ${uptimeStr}\n`;
+  text += `📅 Yayın aralığı: ${settings.intervalMinutes} dakika\n\n`;
+
+  text += `📊 *Bu oturumda yayınlanan (${total} haber)*\n`;
+  text += `🖼 Görsel: ${mediaStats.image} (%${imgPct})\n`;
+  text += `🎬 Video: ${mediaStats.video} (%${vidPct})\n`;
+  text += `📝 Metin: ${mediaStats.text} (%${txtPct})\n`;
+  text += `📂 Toplam kayıtlı URL: ${publishedUrls.size}\n\n`;
+
+  text += `🔧 *Araçlar*\n`;
+  text += `yt-dlp: ${ytdlpVersion}\n`;
+  text += `ffmpeg: ${ffmpegOk}\n\n`;
+
+  if (recentErrors.length > 0) {
+    text += `⚠️ *Son hatalar*\n`;
+    recentErrors.slice(0, 3).forEach(e => { text += `• ${e}\n`; });
+  } else {
+    text += `✅ Son hata yok`;
+  }
+
+  bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
+});
+
 bot.on('polling_error', (err) => {
+  trackError('polling', err.message);
   console.error(`⚠️ Polling hatası: ${err.message}`);
 });
 
