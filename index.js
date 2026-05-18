@@ -120,72 +120,17 @@ function isAdmin(chatId) {
 // ─── RSS + YouTube Kaynakları ─────────────────────────────────────────────────
 
 const RSS_FEEDS = [
-  {
-    url: 'https://news.google.com/rss/search?q=site:iha.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-    label: '📡 İHA',
-    source: 'İHA',
-    type: 'google',
-    category: 'genel',
-  },
-  {
-    url: 'https://news.google.com/rss/search?q=site:dha.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-    label: '📡 DHA',
-    source: 'DHA',
-    type: 'google',
-    category: 'genel',
-  },
+  // ── Muhalif / Bağımsız Haber Kaynakları ──────────────────────────────────
   {
     url: 'https://news.google.com/rss/search?q=site:ankaajans.com&hl=tr&gl=TR&ceid=TR:tr',
-    label: '📡 ANKA',
+    label: '📡 ANKA Ajans',
     source: 'ANKA',
     type: 'google',
     category: 'politika',
   },
   {
-    url: 'https://www.aa.com.tr/tr/rss/default?cat=guncel',
-    label: '📡 AA | Güncel',
-    source: 'AA',
-    type: 'direct',
-    category: 'genel',
-  },
-  {
-    url: 'https://www.aa.com.tr/tr/rss/default?cat=spor',
-    label: '⚽ AA | Spor',
-    source: 'AA',
-    type: 'direct',
-    category: 'spor',
-  },
-  {
-    url: 'https://www.aa.com.tr/tr/rss/default?cat=ekonomi',
-    label: '💰 AA | Ekonomi',
-    source: 'AA',
-    type: 'direct',
-    category: 'ekonomi',
-  },
-  {
-    url: 'https://www.hurriyet.com.tr/rss/anasayfa',
-    label: '🗞 Hürriyet',
-    source: 'Hürriyet',
-    type: 'direct',
-    category: 'genel',
-  },
-  {
-    url: 'https://www.milliyet.com.tr/rss/rssNew/gundemRss.xml',
-    label: '🗞 Milliyet | Gündem',
-    source: 'Milliyet',
-    type: 'direct',
-    category: 'genel',
-  },
-  {
-    url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-    label: '🗞 Sözcü',
-    source: 'Sözcü',
-    type: 'google',
-    category: 'genel',
-  },
-  {
     url: 'https://www.cumhuriyet.com.tr/rss/son_dakika.xml',
-    label: '🗞 Cumhuriyet | Son Dakika',
+    label: '🗞 Cumhuriyet',
     source: 'Cumhuriyet',
     type: 'direct',
     category: 'genel',
@@ -198,24 +143,10 @@ const RSS_FEEDS = [
     category: 'dunya',
   },
   {
-    url: 'https://www.cumhuriyet.com.tr/rss/8',
-    label: '⚽ Cumhuriyet | Spor',
-    source: 'Cumhuriyet',
-    type: 'direct',
-    category: 'spor',
-  },
-  {
-    url: 'https://www.cumhuriyet.com.tr/rss/10',
-    label: '💻 Cumhuriyet | Teknoloji',
-    source: 'Cumhuriyet',
-    type: 'direct',
-    category: 'teknoloji',
-  },
-  {
-    url: 'https://www.haberturk.com/rss',
-    label: '🗞 HaberTürk',
-    source: 'HaberTürk',
-    type: 'direct',
+    url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 Sözcü',
+    source: 'Sözcü',
+    type: 'google',
     category: 'genel',
   },
   {
@@ -233,26 +164,70 @@ const RSS_FEEDS = [
     category: 'politika',
   },
   {
+    url: 'https://news.google.com/rss/search?q=site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 T24',
+    source: 'T24',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 Gazete Duvar',
+    source: 'Gazete Duvar',
+    type: 'google',
+    category: 'politika',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:birgun.net&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 BirGün',
+    source: 'BirGün',
+    type: 'google',
+    category: 'politika',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:odatv.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 OdaTV',
+    source: 'OdaTV',
+    type: 'google',
+    category: 'politika',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:tele1.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '📺 Tele1',
+    source: 'Tele1',
+    type: 'google',
+    category: 'politika',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:artigercek.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 Artı Gerçek',
+    source: 'Artı Gerçek',
+    type: 'google',
+    category: 'politika',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:bianet.org&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗞 Bianet',
+    source: 'Bianet',
+    type: 'google',
+    category: 'genel',
+  },
+  // ── Genel / Ekonomi ────────────────────────────────────────────────────────
+  {
+    url: 'https://news.google.com/rss/search?q=site:dha.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '📡 DHA',
+    source: 'DHA',
+    type: 'google',
+    category: 'genel',
+  },
+  {
     url: 'https://www.ntv.com.tr/son-dakika.rss',
-    label: '📺 NTV | Son Dakika',
+    label: '📺 NTV',
     source: 'NTV',
     type: 'direct',
     category: 'genel',
   },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?user=ntv',
-    label: '▶️ NTV YouTube',
-    source: 'NTV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?user=trthaber',
-    label: '▶️ TRT Haber YouTube',
-    source: 'TRT Haber',
-    type: 'youtube',
-    category: 'video',
-  },
+  // ── Muhalif YouTube Kanalları ──────────────────────────────────────────────
   {
     url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCf_ResXZzE-o18zACUEmyvQ',
     label: '▶️ Halk TV YouTube',
@@ -268,22 +243,36 @@ const RSS_FEEDS = [
     category: 'video',
   },
   {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCJCYKGZ4ZyjjshYa6fhRgRw',
-    label: '▶️ CNN Türk YouTube',
-    source: 'CNN Türk',
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCo_RGmsTwCBt6VIgU0IQEHA',
+    label: '▶️ Tele1 YouTube',
+    source: 'Tele1',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCpHBnE7RdmHCopCJEDYkiEA',
+    label: '▶️ CHP TV YouTube',
+    source: 'CHP TV',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCYXe_Lq4D_MAlNUH_VJEGWg',
+    label: '▶️ KRT TV YouTube',
+    source: 'KRT TV',
     type: 'youtube',
     category: 'video',
   },
   {
     url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr+video&hl=tr&gl=TR&ceid=TR:tr',
-    label: '▶️ Sözcü TV',
-    source: 'Sözcü TV',
+    label: '▶️ Sözcü Video',
+    source: 'Sözcü',
     type: 'google',
     category: 'video',
   },
   {
     url: 'https://news.google.com/rss/search?q=site:krttv.com.tr+video&hl=tr&gl=TR&ceid=TR:tr',
-    label: '▶️ KRT TV Video',
+    label: '▶️ KRT Video',
     source: 'KRT TV',
     type: 'google',
     category: 'video',
@@ -381,6 +370,8 @@ function findRelatedMessageId(title) {
 
 // ─── Yayınlanan URL takibi ────────────────────────────────────────────────────
 
+const PUBLISHED_TITLES_FILE = path.join(__dirname, 'published_titles.json');
+
 function loadPublishedUrls() {
   try {
     if (fs.existsSync(PUBLISHED_FILE)) {
@@ -401,8 +392,27 @@ function persistPublishedUrls() {
 const publishedUrls = loadPublishedUrls();
 setInterval(persistPublishedUrls, 30 * 1000);
 
-// ─── Başlık bazlı tekrar engeli (Railway restart'ta sıfırlanır ama URL dosyası kalır) ──
-const publishedTitlesSession = new Set();
+// ─── Başlık bazlı tekrar engeli — dosyaya da kaydediliyor (Railway restart'ta sıfırlanmaz) ──
+function loadPublishedTitles() {
+  try {
+    if (fs.existsSync(PUBLISHED_TITLES_FILE)) {
+      const arr = JSON.parse(fs.readFileSync(PUBLISHED_TITLES_FILE, 'utf8'));
+      return new Set(arr);
+    }
+  } catch {}
+  return new Set();
+}
+
+const publishedTitlesSession = loadPublishedTitles();
+
+function persistPublishedTitles() {
+  try {
+    let arr = [...publishedTitlesSession];
+    if (arr.length > 3000) arr = arr.slice(arr.length - 2000);
+    fs.writeFileSync(PUBLISHED_TITLES_FILE, JSON.stringify(arr));
+  } catch {}
+}
+setInterval(persistPublishedTitles, 30 * 1000);
 
 function normalizeTitle(title) {
   return (title || '').toLowerCase()
@@ -412,9 +422,22 @@ function normalizeTitle(title) {
     .slice(0, 80);
 }
 
+// Kelime örtüşme benzerlik kontrolü (%60+ aynı kelime = duplicate)
+function isSimilarTitle(a, b) {
+  const wordsA = new Set(a.split(' ').filter(w => w.length > 3));
+  const wordsB = new Set(b.split(' ').filter(w => w.length > 3));
+  if (wordsA.size === 0 || wordsB.size === 0) return false;
+  let overlap = 0;
+  for (const w of wordsA) { if (wordsB.has(w)) overlap++; }
+  return overlap / Math.min(wordsA.size, wordsB.size) >= 0.60;
+}
+
 function isTitleDuplicate(title) {
   const norm = normalizeTitle(title);
   if (publishedTitlesSession.has(norm)) return true;
+  // Benzerlik kontrolü (son 200 başlık)
+  const recent = [...publishedTitlesSession].slice(-200);
+  if (recent.some(t => isSimilarTitle(norm, t))) return true;
   publishedTitlesSession.add(norm);
   return false;
 }
@@ -526,14 +549,18 @@ function fetchOgMeta(url, redirectCount = 0) {
           .join(' ');
         const articleBody = bodyText.length > 80 ? bodyText.slice(0, 1200) : null;
 
-        // İkinci görsel: içerikteki büyük <img> tag'ları
-        const imgTags = html.matchAll(/<img[^>]+src=["']([^"']{20,})["']/gi);
+        // İkinci görsel: haber sayfasındaki büyük içerik görselleri
+        // Alakasız küçük görseller (logo, ikon, reklam, tracking pixel) hariç
+        const imgTags = html.matchAll(/<img[^>]+src=["']([^"']{30,})["']/gi);
         let image2 = null;
+        const SKIP_PATTERNS = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','social','button','arrow','loading','spinner','blank','spacer','1x1','tracking'];
         for (const m of imgTags) {
           const u = m[1];
-          if (u && u.startsWith('http') && /\.(jpg|jpeg|png|webp)/i.test(u) && u !== image && !u.includes('logo') && !u.includes('icon') && !u.includes('avatar') && !u.includes('ads') && !u.includes('pixel') && u.length > 30) {
-            image2 = u; break;
-          }
+          if (!u || !u.startsWith('http') || !/\.(jpg|jpeg|png|webp)/i.test(u) || u === image) continue;
+          if (SKIP_PATTERNS.some(p => u.toLowerCase().includes(p))) continue;
+          // Boyut filtresi: URL'de küçük boyut varsa atla
+          if (/[_-](\d{1,3})x(\d{1,3})[_.-]/.test(u) && !/(\d{3,4})x(\d{3,4})/.test(u)) continue;
+          image2 = u; break;
         }
         // Tüm og:image variantları
         const ogImg2m = html.match(/<meta[^>]+property=["']og:image:secure_url["'][^>]+content=["']([^"']+)["']/i) ||
@@ -607,8 +634,8 @@ async function summarizeNews(title, description, articleBody = null) {
   if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) return fullContent || inputText || null;
   try {
     const prompt = fullContent
-      ? `Aşağıdaki Türkçe haberi 2-3 cümleyle, sade ve akıcı bir şekilde özetle. Önemli detayları (kim ne dedi, ne oldu, nerede) mutlaka dahil et. Kaynak adı, tarih veya link ekleme. Sadece özet metni yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
-      : `Aşağıdaki haber başlığını Türkçe olarak 1-2 cümleyle kısaca açıkla. Ne olduğunu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
+      ? `Sen muhalif ve eleştirel bir Türk gazetecisisin. Aşağıdaki haberi 2-3 cümleyle özetle ve kısa bir muhalefet perspektifli yorum ekle. Hükümetin ya da iktidarın söylemlerine eleştirel yaklaş, vatandaşa etkisini vurgula. Kaynak adı, tarih veya link ekleme. Sadece metin yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
+      : `Sen muhalif ve eleştirel bir Türk gazetecisisin. Aşağıdaki haber başlığını 1-2 cümleyle özetle ve iktidarın bu konudaki tutumuna kısa eleştirel bir bakış ekle. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
@@ -1578,18 +1605,11 @@ async function publishNextNews() {
     if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
   }
 
-  // Wikipedia görseli — görsel bulunamadıysa son çare
+  // Görsel bulunamazsa: haberi atla (Wikipedia alakasız görseller veriyor)
   if (!chosenMedia.url && validItems.length > 0) {
     chosenItem = chosenItem || validItems[0];
-    const { title: wikiTitle } = buildItemMeta(chosenItem, feed);
-    console.log(`🔎 Wikipedia görseli aranıyor...`);
-    const wikiImg = await fetchSubjectImage(wikiTitle);
-    if (wikiImg) {
-      chosenMedia = { type: 'image', url: wikiImg };
-      console.log(`🖼 Wikipedia görseli kullanılıyor`);
-    } else {
-      chosenMedia = { type: null, url: null };
-    }
+    chosenMedia = { type: null, url: null };
+    console.log(`⚠️ Haber için görsel bulunamadı, atlanıyor`);
   }
 
   if (!chosenItem) return;
@@ -1678,16 +1698,9 @@ async function publishNextNews() {
         sentType = 'image';
       }
     } else {
-      // Medya yok — Wikipedia ile son deneme
-      const wikiImg2 = await fetchSubjectImage(title);
-      if (wikiImg2) {
-        sentMsg = await bot.sendPhoto(CHANNEL_ID, wikiImg2, sendOpts({ caption }));
-        sentType = 'image';
-        console.log('🖼 Sadece Wikipedia görseli gönderildi');
-      } else {
-        sentType = 'skip';
-        console.log('⏭ Hiç medya bulunamadı, haber atlanıyor');
-      }
+      // Medya yok — haberi atla
+      sentType = 'skip';
+      console.log('⏭ Görsel yok, haber atlanıyor');
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
@@ -1914,8 +1927,11 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const msgId = query.message.message_id;
 
+  // Telegram'a hemen "aldım" yanıtı ver — UI donmasını önle
+  bot.answerCallbackQuery(query.id).catch(() => {});
+
   if (!isAdmin(chatId)) {
-    await bot.answerCallbackQuery(query.id, { text: '❌ Admin yetkisi gerekli!' });
+    bot.sendMessage(query.message.chat.id, '❌ Admin yetkisi gerekli!').catch(() => {});
     return;
   }
 
