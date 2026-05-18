@@ -929,6 +929,110 @@ function upgradeImageUrl(url) {
 
 const MAX_VIDEO_SIZE_BYTES = 48 * 1024 * 1024;
 
+
+// ─── Invidious API ile YouTube İndirme ────────────────────────────────────────
+// Railway IP'si YouTube'u engelliyor; Invidious bu engeli kendi sunucularında aşıyor
+// ve bize doğrudan indirilebilir video URL'i veriyor.
+
+const INVIDIOUS_INSTANCES = [
+  'https://inv.tux.pizza',
+  'https://invidious.flokinet.to',
+  'https://yt.artemislena.eu',
+  'https://invidious.privacydev.net',
+  'https://yewtu.be',
+  'https://invidious.fdn.fr',
+  'https://invidious.drgns.space',
+  'https://invidious.io.lol',
+];
+
+// Invidious API'den 720p-1080p video URL'i al
+async function getInvidiousVideoUrl(videoId) {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      const apiUrl = `${instance}/api/v1/videos/${videoId}?fields=formatStreams,adaptiveFormats`;
+      console.log(`🔍 Invidious deniyor: ${instance}`);
+      const res = await axios.get(apiUrl, {
+        timeout: 12000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)' },
+      });
+      const data = res.data;
+
+      // formatStreams = video+ses birleşik (en basit indirme)
+      const streams = (data.formatStreams || []).filter(s => s.url);
+
+      // Kalite önceliği: 1080p → 720p → 480p → herhangi biri
+      const pick =
+        streams.find(s => (s.qualityLabel || s.quality || '').startsWith('1080')) ||
+        streams.find(s => (s.qualityLabel || s.quality || '').startsWith('720')) ||
+        streams.find(s => (s.qualityLabel || s.quality || '').startsWith('480')) ||
+        streams[0];
+
+      if (pick?.url) {
+        console.log(`✅ Invidious ${instance} → ${pick.qualityLabel || pick.quality || '?'}`);
+        return { url: pick.url, quality: pick.qualityLabel || pick.quality || 'unknown', instance };
+      }
+    } catch (e) {
+      console.log(`⚠️ Invidious ${instance}: ${e.message?.slice(0, 60)}`);
+    }
+  }
+  return null;
+}
+
+// Invidious URL'inden dosyayı indir
+async function downloadFromInvidious(videoId) {
+  const info = await getInvidiousVideoUrl(videoId);
+  if (!info) { console.error('❌ Tüm Invidious sunucuları başarısız'); return null; }
+
+  const tmpDir = path.join(os.tmpdir(), `inv_${Date.now()}`);
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+  const filePath = path.join(tmpDir, 'video.mp4');
+
+  console.log(`⬇️ Invidious'tan indiriliyor (${info.quality})...`);
+  try {
+    const resp = await axios.get(info.url, {
+      responseType: 'stream',
+      timeout: 180000,
+      maxContentLength: MAX_VIDEO_SIZE_BYTES,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; TelegramBot/1.0)',
+        'Referer': info.instance,
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      const writer = fs.createWriteStream(filePath);
+      let downloaded = 0;
+      resp.data.on('data', chunk => {
+        downloaded += chunk.length;
+        if (downloaded > MAX_VIDEO_SIZE_BYTES) {
+          resp.data.destroy();
+          writer.destroy();
+          reject(new Error(`Dosya çok büyük (${Math.round(downloaded/1024/1024)}MB)`));
+        }
+      });
+      resp.data.pipe(writer);
+      writer.on('finish', resolve);
+      writer.on('error', reject);
+      resp.data.on('error', reject);
+    });
+
+    const stat = fs.statSync(filePath);
+    if (stat.size < 50000) {
+      console.error(`❌ Dosya çok küçük (${stat.size} byte), muhtemelen hatalı`);
+      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      return null;
+    }
+
+    console.log(`✅ Invidious indirme tamam: ${Math.round(stat.size/1024/1024)}MB`);
+    return filePath;
+  } catch (e) {
+    console.error(`❌ Invidious indirme hatası: ${e.message}`);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    return null;
+  }
+}
+
+
 const YTDLP_BIN = (() => {
   const candidates = [
     'yt-dlp',
@@ -973,7 +1077,7 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
       '--no-playlist',
       '--max-filesize', '48m',
       '--extractor-args', `youtube:player_client=${clientArg}`,
-      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[ext=mp4]/best',
+      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=720][ext=webm]+bestaudio/best[height>=720][height<=1080]/best[height<=1080]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
       '--extractor-retries', '3',
@@ -984,7 +1088,6 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
       '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
       '-o', outputTemplate,
       '--no-warnings',
-      '--quiet',
       videoUrl,
     ];
 
@@ -1017,25 +1120,34 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
   });
 }
 
-// YouTube video indirme: yt-dlp birden fazla istemciyle dener
+// YouTube video indirme: Invidious (ana) → yt-dlp (yedek)
 async function downloadYoutubeVideo(videoUrl) {
   console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
 
-  // Farklı YouTube istemcileriyle dene — Railway IP bloğunu aşmak için
-  const clients = [
-    'tv_embedded',
-    'android',
-    'ios',
-    'mweb',
-  ];
+  // Video ID çıkar
+  const videoId =
+    videoUrl.match(/[?&]v=([^&]+)/)?.[1] ||
+    videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
+    videoUrl.match(/shorts\/([^?/]+)/)?.[1];
 
-  for (const client of clients) {
-    console.log(`🔄 yt-dlp istemci: ${client}`);
+  if (!videoId) {
+    console.error('❌ Video ID çıkarılamadı');
+    return null;
+  }
+
+  // 1. Invidious ile dene (Railway IP bloğunu aşar)
+  console.log(`🔄 Invidious deniyor (videoId: ${videoId})...`);
+  const invFile = await downloadFromInvidious(videoId);
+  if (invFile) return invFile;
+
+  // 2. Yedek: yt-dlp farklı istemcilerle
+  console.log('🔄 Yedek: yt-dlp deneniyor...');
+  for (const client of ['tv_embedded', 'android', 'ios']) {
     const filePath = await downloadWithYtdlp(videoUrl, client);
     if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
   }
 
-  console.error('❌ yt-dlp tüm istemciler başarısız oldu');
+  console.error('❌ Tüm yöntemler başarısız (Invidious + yt-dlp)');
   return null;
 }
 
@@ -1300,7 +1412,8 @@ async function publishNextNews() {
     if (videoSent) {
       sentType = 'video';
     } else {
-      // 2. İndirme başarısız → thumbnail + link caption ile gönder
+      // Video indirilemedi — thumbnail + izle linki gönder (son çare)
+      console.log(`⚠️ Video indirilemedi, thumbnail gönderiliyor...`);
       const thumbCandidates = videoId ? [
         `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
         `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
@@ -1310,26 +1423,23 @@ async function publishNextNews() {
       let sent = false;
       for (const tUrl of thumbCandidates) {
         try {
-          // Caption'da YouTube linki var, kullanıcı tıklayarak izleyebilir
           sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption, ...replyParam });
           sentType = 'image';
           sent = true;
-          console.log(`🖼 YouTube thumbnail gönderildi (link caption'da mevcut)`);
+          console.log(`🖼 YouTube thumbnail gönderildi (geçici — video indirilemedi)`);
           break;
         } catch {}
       }
 
-      // === FİX 2: Thumbnail da başarısızsa — link önizlemeli mesaj gönder ===
-      // Telegram YouTube linklerini otomatik olarak gömüyor (thumbnail + izle butonu)
       if (!sent) {
         try {
           sentMsg = await bot.sendMessage(CHANNEL_ID, caption, {
-            disable_web_page_preview: false, // Telegram YouTube videosunu otomatik önizler
+            disable_web_page_preview: false,
             ...replyParam,
           });
           sentType = 'text';
-          console.log(`🔗 YouTube link önizlemesi gönderildi`);
-        } catch (err) { console.error(`❌ YouTube metin gönderme: ${err.message}`); }
+          console.log(`🔗 YouTube link gönderildi (geçici — video indirilemedi)`);
+        } catch (err) { console.error(`❌ YouTube mesaj hatası: ${err.message}`); }
       }
     }
 
