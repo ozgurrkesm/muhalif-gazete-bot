@@ -1111,21 +1111,44 @@ async function publishNextNews() {
       : (() => { const mg = item.mediaGroup || item['media:group']; return mg?.['media:thumbnail']?.[0]?.$?.url ? upgradeImageUrl(mg['media:thumbnail'][0].$.url) : null; })();
 
     let sentMsg = null;
-    let sentType = 'video';
+    let sentType = 'image';
 
-    const videoSent = await sendYoutubeVideo(CHANNEL_ID, url, caption);
-    if (!videoSent) {
-      // Video yüklenemedi → sadece thumbnail (buton yok)
+    // YouTube için: maxresdefault.jpg (1280x720, 16:9) + ▶️ İzle butonu
+    // yt-dlp yerine bu yöntem kullan — hem hızlı hem stabil hem tam kalite
+    const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
+    const watchKeyboard = {
+      inline_keyboard: [[{ text: '▶️ İzle', url }]],
+    };
+
+    // Thumbnail URL'leri sırayla dene (maxres → hq → mq)
+    const thumbCandidates = videoId ? [
+      `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+      `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+    ] : (thumbUrl ? [thumbUrl] : []);
+
+    let sent = false;
+    for (const tUrl of thumbCandidates) {
       try {
-        const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
-        if (thumbUrl) {
-          sentMsg = await bot.sendPhoto(CHANNEL_ID, thumbUrl, { caption, ...replyParam });
-          sentType = 'image';
-        } else {
-          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { disable_web_page_preview: true, ...replyParam });
-          sentType = 'text';
-        }
-      } catch (err) { console.error(`❌ YouTube fallback gönderme: ${err.message}`); sentType = 'text'; }
+        sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, {
+          caption,
+          reply_markup: watchKeyboard,
+          ...replyParam,
+        });
+        sentType = 'image';
+        sent = true;
+        break;
+      } catch {}
+    }
+
+    if (!sent) {
+      try {
+        sentMsg = await bot.sendMessage(CHANNEL_ID, `${caption}\n\n▶️ ${url}`, {
+          disable_web_page_preview: false,
+          ...replyParam,
+        });
+        sentType = 'text';
+      } catch (err) { console.error(`❌ YouTube metin gönderme: ${err.message}`); }
     }
 
     if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
