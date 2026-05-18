@@ -1822,34 +1822,97 @@ function resetInterval() {
           const categoryTag = detectCategory(title, rawDesc);
           const catEmoji = categoryTag ? `${categoryTag} ` : '';
 
-          let caption = `🚨 *SON DAKİKA*
-
-${catEmoji}${title}`;
+          let caption = `🚨 SON DAKİKA\n\n${catEmoji}${title}`;
           if (aiSummary && aiSummary.length > 5) {
-            caption += `
-
-${cleanArrows(aiSummary)}`;
+            caption += `\n\n${cleanArrows(aiSummary)}`;
           }
           if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
+          let sentMsg = null;
+          let sentType = 'text';
+
           try {
-            const ogMeta = await fetchOgMeta(url);
-            let sentMsg = null;
-
-            if (ogMeta.image) {
-              sentMsg = await bot.sendPhoto(CHANNEL_ID, upgradeImageUrl(ogMeta.image), { caption, parse_mode: 'Markdown' });
-            } else {
-              sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown' });
+            // ── Adım 1: Haberin sayfasından direkt video bul, indir ve gönder ──
+            const webVideoUrl = await fetchArticleHtmlAndExtractVideo(url);
+            if (webVideoUrl) {
+              console.log(`🎬 Son dakika video bulundu: ${webVideoUrl.slice(0, 80)}`);
+              const videoSent = await sendWebVideo(CHANNEL_ID, webVideoUrl, caption, null);
+              if (videoSent) {
+                sentType = 'video';
+                mediaStats.video++;
+                console.log(`🚨🎬 SON DAKİKA video yayınlandı: ${title.slice(0, 60)}`);
+              }
             }
 
-            if (sentMsg?.message_id) {
-              registerSentMessage(sentMsg.message_id, title);
-              await tryPin(sentMsg.message_id);
+            // ── Adım 2: Video yoksa/başarısızsa — maksimum kalite resim gönder ──
+            if (sentType !== 'video') {
+              // OG meta + RSS medyasını eş zamanlı al
+              const [ogMeta, rssMedia] = await Promise.all([
+                fetchOgMeta(url),
+                Promise.resolve(extractMedia(item)),
+              ]);
+
+              if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+
+              // En yüksek kaliteli görseli seç: OG image > RSS enclosure > OG image2
+              const img1 = ogMeta.image
+                ? upgradeImageUrl(ogMeta.image)
+                : (rssMedia.type === 'image' ? rssMedia.url : null);
+              const img2 = ogMeta.image2
+                ? upgradeImageUrl(ogMeta.image2)
+                : null;
+
+              if (img1 && img2) {
+                // Çift görsel — media group olarak gönder
+                try {
+                  const mediaGroup = [
+                    { type: 'photo', media: img1, caption },
+                    { type: 'photo', media: img2 },
+                  ];
+                  const msgs = await bot.sendMediaGroup(CHANNEL_ID, mediaGroup);
+                  sentMsg = msgs?.[0] || null;
+                  sentType = 'image';
+                  mediaStats.image++;
+                  console.log(`🚨📸📸 SON DAKİKA çift resim: ${title.slice(0, 50)}`);
+                } catch {
+                  // Çift resim başarısız → tek resim
+                  try {
+                    sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption });
+                    sentType = 'image';
+                    mediaStats.image++;
+                  } catch { sentType = 'text'; }
+                }
+              } else if (img1) {
+                try {
+                  sentMsg = await bot.sendPhoto(CHANNEL_ID, img1, { caption });
+                  sentType = 'image';
+                  mediaStats.image++;
+                  console.log(`🚨📸 SON DAKİKA resim: ${title.slice(0, 50)}`);
+                } catch {
+                  // Görsel URL bozuk → metin
+                  sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
+                  sentType = 'text';
+                  mediaStats.text++;
+                }
+              } else {
+                // Hiç medya yok → sadece metin
+                sentMsg = await bot.sendMessage(CHANNEL_ID, caption);
+                sentType = 'text';
+                mediaStats.text++;
+                console.log(`🚨📝 SON DAKİKA metin: ${title.slice(0, 50)}`);
+              }
             }
 
-            console.log(`🚨 SON DAKİKA yayınlandı: ${title.slice(0, 60)}`);
-            mediaStats.image++;
+            // Mesajı sabitle
+            const pinId = sentMsg?.message_id;
+            if (pinId) {
+              registerSentMessage(pinId, title);
+              await tryPin(pinId);
+            }
+
+            console.log(`✅ [Son Dakika] [${sentType}] ${title.slice(0, 60)}`);
             await notifyFilterUsers(title, rawDesc, url);
+
           } catch (err) {
             console.error(`❌ Son dakika gönderme hatası: ${err.message}`);
           }
