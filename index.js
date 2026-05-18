@@ -806,6 +806,10 @@ const BLOCKED_TITLE_PATTERNS = [
   /bülten/i, /özet/i, /haftalık/i, /aylık/i, /günlük özet/i,
   /bülten\s*-?\s*\d+/i, /ajans haberleri/i, /haber bülteni/i,
   /toplantı notları/i, /basın açıklaması listesi/i,
+  // Canlı yayınlar — indirilemez ve haber değil
+  /#canl[iı]/i, /canl[iı]\s*yay[iı]n/i, /\bLIVE\b/i,
+  // Program/talk-show kalıpları (haber değil)
+  /\b(ile\s+rota|ile\s+başak|programı?|özel yayın|stüdyo|röportaj kuşağı)\b/i,
 ];
 
 function isRecentNews(item) {
