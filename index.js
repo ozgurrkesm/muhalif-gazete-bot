@@ -902,13 +902,17 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
     const args = [
       '--no-playlist',
       '--max-filesize', '48m',
-      '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[ext=mp4]/best',
+      // Android player client — YouTube bot korumasını atlar
+      '--extractor-args', 'youtube:player_client=android,web',
+      '-f', 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
-      '--no-playlist',
-      '--extractor-retries', '3',
-      '--socket-timeout', '30',
-      '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      '--extractor-retries', '5',
+      '--socket-timeout', '60',
+      '--no-check-certificate',
+      '--geo-bypass',
+      // Android YouTube kullanıcı ajanı
+      '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
       '-o', outputTemplate,
       '--no-warnings',
       '--quiet',
