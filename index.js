@@ -292,6 +292,70 @@ const CATEGORY_LABELS = {
 
 const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
 
+  // ─── Son Dakika Hızlı Tarama ─────────────────────────────────────────────────
+
+  const BREAKING_NEWS_KEYWORDS = [
+    'son dakika', 'acil', 'flaş', 'flash', 'breaking',
+    'deprem', 'patlama', 'bomba', 'saldırı', 'terör',
+    'yangın', 'sel', 'fırtına', 'tsunami',
+    'vefat etti', 'hayatını kaybetti', 'öldürüldü',
+    'istifa etti', 'istifa', 'gözaltı', 'tutuklandı', 'tutuklama',
+    'acil toplantı', 'olağanüstü', 'alarm',
+  ];
+
+  const BREAKING_NEWS_FEEDS = [
+    {
+      url: 'https://news.google.com/rss/search?q=%22son+dakika%22+&hl=tr&gl=TR&ceid=TR:tr',
+      label: '🚨 Google Son Dakika',
+      source: 'Son Dakika',
+      type: 'google',
+      category: 'genel',
+    },
+    {
+      url: 'https://www.cumhuriyet.com.tr/rss/son_dakika.xml',
+      label: '🚨 Cumhuriyet Son Dakika',
+      source: 'Cumhuriyet',
+      type: 'direct',
+      category: 'genel',
+    },
+    {
+      url: 'https://news.google.com/rss/search?q=%22son+dakika%22+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+      label: '🚨 T24 Son Dakika',
+      source: 'T24',
+      type: 'google',
+      category: 'genel',
+    },
+    {
+      url: 'https://news.google.com/rss/search?q=%22son+dakika%22+site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+      label: '🚨 Sözcü Son Dakika',
+      source: 'Sözcü',
+      type: 'google',
+      category: 'genel',
+    },
+    {
+      url: 'https://news.google.com/rss/search?q=%22son+dakika%22+site:cumhuriyet.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+      label: '🚨 Cumhuriyet SD Google',
+      source: 'Cumhuriyet',
+      type: 'google',
+      category: 'genel',
+    },
+    {
+      url: 'https://news.google.com/rss/search?q=%22son+dakika%22+site:haberler.com&hl=tr&gl=TR&ceid=TR:tr',
+      label: '🚨 Haberler.com Son Dakika',
+      source: 'Haberler.com',
+      type: 'google',
+      category: 'genel',
+    },
+  ];
+
+  function isBreakingNews(title) {
+    if (!title) return false;
+    const lower = title.toLowerCase();
+    return BREAKING_NEWS_KEYWORDS.some(kw => lower.includes(kw));
+  }
+
+  
+
 // ─── RSS Parser ───────────────────────────────────────────────────────────────
 
 const parser = new RssParser({
@@ -1728,6 +1792,82 @@ function resetInterval() {
   console.log(`⏱ Yayın aralığı güncellendi: ${settings.intervalMinutes} dakika`);
 }
 
+  // ─── Son Dakika Tarayıcısı ────────────────────────────────────────────────────
+
+  let breakingNewsInterval = null;
+  const BREAKING_INTERVAL_MS = 30 * 1000; // 30 saniye
+
+  async function checkBreakingNews() {
+    if (settings.paused) return;
+
+    for (const feed of BREAKING_NEWS_FEEDS) {
+      try {
+        const items = await fetchFeed(feed);
+        const newItems = items.filter(item => {
+          const url = item.link || item.guid;
+          const title = item.title || '';
+          return url && !publishedUrls.has(url) && isValidNewsItem(item, feed) && isBreakingNews(title);
+        });
+
+        for (const item of newItems.slice(0, 2)) {
+          const url = item.link || item.guid;
+          const { title: checkTitle } = buildItemMeta(item, feed);
+          if (isTitleDuplicate(checkTitle)) continue;
+
+          publishedUrls.add(url);
+          persistPublishedUrls();
+
+          const { title, rawDesc } = buildItemMeta(item, feed);
+          const aiSummary = await summarizeNews(title, rawDesc);
+          const categoryTag = detectCategory(title, rawDesc);
+          const catEmoji = categoryTag ? `${categoryTag} ` : '';
+
+          let caption = `🚨 *SON DAKİKA*
+
+${catEmoji}${title}`;
+          if (aiSummary && aiSummary.length > 5) {
+            caption += `
+
+${cleanArrows(aiSummary)}`;
+          }
+          if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+
+          try {
+            const ogMeta = await fetchOgMeta(url);
+            let sentMsg = null;
+
+            if (ogMeta.image) {
+              sentMsg = await bot.sendPhoto(CHANNEL_ID, upgradeImageUrl(ogMeta.image), { caption, parse_mode: 'Markdown' });
+            } else {
+              sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown' });
+            }
+
+            if (sentMsg?.message_id) {
+              registerSentMessage(sentMsg.message_id, title);
+              await tryPin(sentMsg.message_id);
+            }
+
+            console.log(`🚨 SON DAKİKA yayınlandı: ${title.slice(0, 60)}`);
+            mediaStats.image++;
+            await notifyFilterUsers(title, rawDesc, url);
+          } catch (err) {
+            console.error(`❌ Son dakika gönderme hatası: ${err.message}`);
+          }
+        }
+      } catch {
+        // Feed hatası — sessizce geç
+      }
+    }
+  }
+
+  function startBreakingNewsChecker() {
+    if (breakingNewsInterval) clearInterval(breakingNewsInterval);
+    breakingNewsInterval = setInterval(checkBreakingNews, BREAKING_INTERVAL_MS);
+    console.log(`🚨 Son dakika tarayıcısı aktif (her ${BREAKING_INTERVAL_MS / 1000} saniyede bir)`);
+  }
+
+  
+
 // ─── Admin Panel ──────────────────────────────────────────────────────────────
 
 function adminPanelText() {
@@ -2157,7 +2297,15 @@ bot.onText(/\/filtrelerim/, (msg) => {
   }
 });
 
-bot.onText(/\/haber/, async (msg) => {
+
+  bot.onText(/\/sondakika/, async (msg) => {
+    if (!isAdmin(msg.chat.id)) return;
+    await bot.sendMessage(msg.chat.id, '🚨 Son dakika haberleri taranıyor...');
+    await checkBreakingNews();
+    await bot.sendMessage(msg.chat.id, '✅ Son dakika taraması tamamlandı!');
+  });
+
+  bot.onText(/\/haber/, async (msg) => {
   await bot.sendMessage(msg.chat.id, '📰 Haber çekiliyor...');
   await publishNextNews();
 });
@@ -2356,5 +2504,7 @@ console.log(`🔑 Admin şifresi ayarlı: ${ADMIN_PASSWORD !== 'admin2024' ? 'Ev
 
 publishNextNews();
 resetInterval();
+startBreakingNewsChecker();
+checkBreakingNews(); // İlk kontrol hemen yap
 
 console.log('✅ Bot çalışıyor!');
