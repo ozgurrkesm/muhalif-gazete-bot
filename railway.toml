@@ -1,6 +1,7 @@
 [build]
-builder = "nixpacks"
+  builder = "dockerfile"
 
-[deploy]
-startCommand = "node index.js"
-restartPolicyType = "always"
+  [deploy]
+  startCommand = "node index.js"
+  restartPolicyType = "always"
+  
