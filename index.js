@@ -25,6 +25,7 @@ const aiClient = new OpenAI({
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -108,7 +109,10 @@ function clearFilters(chatId) {
 }
 
 function isAdmin(chatId) {
-  return settings.adminChatIds.includes(String(chatId));
+  const id = String(chatId);
+  // Ortam değişkeninden kalıcı admin (Railway restart'larında kaybolmaz)
+  if (ADMIN_CHAT_ID && id === String(ADMIN_CHAT_ID)) return true;
+  return settings.adminChatIds.includes(id);
 }
 
 // ─── RSS + YouTube Kaynakları ─────────────────────────────────────────────────
@@ -1612,7 +1616,13 @@ bot.onText(/\/setadmin (.+)/, (msg, match) => {
     settings.adminChatIds.push(chatId);
     saveSettings();
   }
-  bot.sendMessage(msg.chat.id, '✅ Admin yetkisi verildi! /admin komutuyla panele erişebilirsin.', {
+  console.log(`✅ Admin giriş: chatId=${chatId} — Railway'de kalıcı yapmak için ADMIN_CHAT_ID=${chatId} ekleyin`);
+  bot.sendMessage(msg.chat.id, `✅ Admin yetkisi verildi!
+
+📌 Kalıcı admin için Railway'e şunu ekleyin:
+ADMIN_CHAT_ID = ${chatId}
+
+/admin komutuyla panele erişebilirsin.`, {
     reply_markup: adminPanelKeyboard(),
   });
   bot.sendMessage(msg.chat.id, adminPanelText(), {
