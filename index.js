@@ -3406,4 +3406,9 @@ resetInterval();
 startBreakingNewsChecker();
 checkBreakingNews(); // İlk kontrol hemen yap
 
+// Başlangıçta bir YouTube videosu kanala gönder
+setTimeout(() => {
+  publishNowInstant().then(r => console.log('🎬 Başlangıç video:', r || 'tamamlandı')).catch(e => console.error('🎬 Başlangıç video hata:', e.message));
+}, 10000);
+
 console.log('✅ Bot çalışıyor!');
