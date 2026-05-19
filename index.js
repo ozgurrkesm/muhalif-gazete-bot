@@ -302,6 +302,49 @@ const RSS_FEEDS = [
     type: 'direct',
     category: 'genel',
   },
+  // ── Spor Kaynakları ────────────────────────────────────────────────────────
+  {
+    url: 'https://www.sporx.com/rss/',
+    label: '⚽ Sporx',
+    source: 'Sporx',
+    type: 'direct',
+    category: 'spor',
+  },
+  {
+    url: 'https://www.ntvspor.net/rss',
+    label: '📺 NTV Spor',
+    source: 'NTV Spor',
+    type: 'direct',
+    category: 'spor',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:fanatik.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Fanatik',
+    source: 'Fanatik',
+    type: 'google',
+    category: 'spor',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:milliyet.com.tr+spor&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Milliyet Spor',
+    source: 'Milliyet',
+    type: 'google',
+    category: 'spor',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:goal.com+tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Goal Türkiye',
+    source: 'Goal',
+    type: 'google',
+    category: 'spor',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=galatasaray+OR+fenerbahce+OR+besiktas+OR+trabzonspor&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Süper Lig Haberleri',
+    source: 'Google Spor',
+    type: 'google',
+    category: 'spor',
+  },
   // ── Muhalif YouTube Kanalları ──────────────────────────────────────────────
   {
     url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCf_ResXZzE-o18zACUEmyvQ',
@@ -568,7 +611,7 @@ function isSimilarTitle(a, b) {
   if (wordsA.size === 0 || wordsB.size === 0) return false;
   let overlap = 0;
   for (const w of wordsA) { if (wordsB.has(w)) overlap++; }
-  return overlap / Math.min(wordsA.size, wordsB.size) >= 0.60;
+  return overlap / Math.min(wordsA.size, wordsB.size) >= 0.45;
 }
 
 function isTitleDuplicate(title) {
@@ -2247,39 +2290,24 @@ async function publishNextNews() {
 
     const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
 
-    // 1. Önce yt-dlp ile videoyu indir, Telegram'a direkt gönder
+    // 1. YouTube videoyu indir, Telegram'a gönder
     const videoSent = await sendYoutubeVideo(CHANNEL_ID, url, caption);
     if (videoSent) {
       sentType = 'video';
+      if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
+      console.log(`✅ [${feed.source}] [youtube/video]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
+      mediaStats.video++;
+      const t = mediaStats.image + mediaStats.video + mediaStats.text;
+      console.log(`📊 Resim:%${Math.round(mediaStats.image/t*100)} Video:%${Math.round(mediaStats.video/t*100)} Metin:%${Math.round(mediaStats.text/t*100)}`);
+      if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
+      await notifyFilterUsers(title, rawDesc, url);
     } else {
-      // Video indirilemedi — thumbnail gönder (link YOK)
-      console.log(`⚠️ Video indirilemedi, thumbnail gönderiliyor (link yok)...`);
-      // Caption'daki tüm http linklerini kaldır
-      const safeCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim();
-      const thumbCandidates = videoId ? [
-        `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
-        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-        `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
-      ] : (thumbUrl ? [thumbUrl] : []);
-
-      for (const tUrl of thumbCandidates) {
-        try {
-          sentMsg = await bot.sendPhoto(CHANNEL_ID, tUrl, { caption: safeCaption, ...replyParam });
-          sentType = 'image';
-          console.log(`🖼 YouTube thumbnail gönderildi (link kaldırıldı)`);
-          break;
-        } catch {}
-      }
+      // Video indirilemedi — YouTube'dan resim GÖNDERME, haberi atla
+      console.log(`⏭ YouTube video indirilemedi, thumbnail gönderilmiyor — haber atlanıyor: ${title.slice(0,50)}`);
+      // publishedUrls'den kaldır ki bir sonraki çalışmada tekrar denenebilsin
+      publishedUrls.delete(url);
+      persistPublishedUrls();
     }
-
-    if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
-
-    console.log(`✅ [${feed.source}] [youtube/${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
-    mediaStats[sentType]++;
-    const t = mediaStats.image + mediaStats.video + mediaStats.text;
-    console.log(`📊 Resim:%${Math.round(mediaStats.image/t*100)} Video:%${Math.round(mediaStats.video/t*100)} Metin:%${Math.round(mediaStats.text/t*100)}`);
-    if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
-    await notifyFilterUsers(title, rawDesc, url);
     return;
   }
 
