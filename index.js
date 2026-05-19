@@ -1948,19 +1948,34 @@ function getActiveFeed() {
     if (pool.length === 0) pool = RSS_FEEDS;
   }
 
+  // Video oranı düşükse önce direct/google feedlerden video çekmeyi dene
+  // (publishNextNews içinde fetchArticleHtmlAndExtractVideo ile web sitelerinden video çekilir)
+  // YouTube'u sadece kategori 'video' veya 'hepsi' olduğunda rotasyona dahil et
   const needed = getNeededMediaType();
   if (needed === 'video') {
-    const youtubePools = pool.filter((f) => f.type === 'youtube');
-    if (youtubePools.length > 0) {
-      const idx = currentFeedIndex % youtubePools.length;
+    // Önce video kategorisindeki direct/google feedleri dene
+    const videoNewsFeeds = pool.filter((f) => f.category === 'video' && f.type !== 'youtube');
+    if (videoNewsFeeds.length > 0) {
+      const idx = currentFeedIndex % videoNewsFeeds.length;
       currentFeedIndex++;
-      return youtubePools[idx];
+      return videoNewsFeeds[idx];
+    }
+    // Sonra herhangi bir direct/google feedi dene (web sayfasında video olabilir)
+    const nonYtFeeds = pool.filter((f) => f.type !== 'youtube');
+    if (nonYtFeeds.length > 0) {
+      const idx = currentFeedIndex % nonYtFeeds.length;
+      currentFeedIndex++;
+      return nonYtFeeds[idx];
     }
   }
 
-  const idx = currentFeedIndex % pool.length;
+  // Normal rotasyon (youtube dahil ama sona koy)
+  const nonYt = pool.filter((f) => f.type !== 'youtube');
+  const yt = pool.filter((f) => f.type === 'youtube');
+  const orderedPool = [...nonYt, ...yt];
+  const idx = currentFeedIndex % orderedPool.length;
   currentFeedIndex++;
-  return pool[idx];
+  return orderedPool[idx];
 }
 
 async function fetchFeed(feed) {
