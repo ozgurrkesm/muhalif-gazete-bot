@@ -2984,7 +2984,20 @@ async function checkBreakingNews() {
   }
 }
 
-function startBreakingNewsChecker() {
+
+  // ─── Yayın Zamanlayıcısı ──────────────────────────────────────────────────────
+  let publishInterval = null;
+
+  function resetInterval() {
+    if (publishInterval) clearInterval(publishInterval);
+    const intervalMs = (settings.intervalMinutes || 1.5) * 60 * 1000;
+    publishInterval = setInterval(() => {
+      publishNextNews().catch(e => console.error('⚠️ Zamanlayıcı hata:', e.message));
+    }, intervalMs);
+    console.log(`⏱ Zamanlayıcı kuruldu: her ${settings.intervalMinutes} dakikada bir haber`);
+  }
+
+  function startBreakingNewsChecker() {
     if (breakingNewsInterval) clearInterval(breakingNewsInterval);
     breakingNewsInterval = setInterval(checkBreakingNews, BREAKING_INTERVAL_MS);
     console.log(`🚨 Son dakika tarayıcısı aktif (her ${BREAKING_INTERVAL_MS / 1000} saniyede bir)`);
