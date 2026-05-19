@@ -2062,28 +2062,23 @@ async function publishNowInstant() {
           tgLog(`🔗 → ${realUrl.slice(0, 80)}`);
         }
 
-        const articleUrl = realUrl.includes('news.google.com') ? null : realUrl;
+        // fetchOgMeta redirect'leri takip eder — Google News URL olsa bile çalışır
+        // ═══ 1. og:image çek (hızlı — her URL türünde dene) ═════════════
+        tgLog(`🖼 Görsel aranıyor...`);
+        const ogMeta = await fetchOgMeta(realUrl);
+        const rssMedia = extractMedia(item);
+        if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+        let ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+        const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
 
-        // ═══ 1. Önce og:image çek (hızlı) ══════════════════════════════
-        let ogImg = null;
-        let ogImg2 = null;
-        if (articleUrl) {
-          tgLog(`🖼 Görsel aranıyor...`);
-          const ogMeta = await fetchOgMeta(articleUrl);
-          const rssMedia = extractMedia(item);
-          if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
-          ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
-          ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
-        }
-
-        // ═══ 2. Sayfadaki gömülü video var mı? ══════════════════════════
+        // ═══ 2. Sayfadaki gömülü video var mı? (Google News değilse) ════
         let articleVidUrl = null;
-        if (sentType === 'none' && articleUrl) {
-          articleVidUrl = await fetchArticleHtmlAndExtractVideo(articleUrl);
+        if (sentType === 'none' && !realUrl.includes('news.google.com')) {
+          articleVidUrl = await fetchArticleHtmlAndExtractVideo(realUrl);
           if (articleVidUrl) tgLog(`🎬 Sayfa videosu bulundu: ${articleVidUrl.slice(0, 60)}`);
         }
 
-        // ═══ 3. Video gönder (doğrudan, indirerek) ══════════════════════
+        // ═══ 3. Video gönder (doğrudan, link/buton yok) ═════════════════
         if (sentType === 'none' && articleVidUrl) {
           const ok = await sendWebVideo(CHANNEL_ID, articleVidUrl, caption);
           if (ok) { sentType = 'video'; mediaStats.video++; }
@@ -2106,9 +2101,9 @@ async function publishNowInstant() {
           }
         }
 
-        // ═══ 5. Görsel de yok — atla (metin gönderme) ═══════════════════
+        // ═══ 5. Görsel de yok — sonraki habere geç ══════════════════════
         if (sentType === 'none') {
-          tgLog(`⏭ Medya bulunamadı, sonraki deneniyor...`);
+          tgLog(`⏭ Medya bulunamadı, sonraki aday deneniyor...`);
         }
 
         if (sentType !== 'none') {
@@ -2268,11 +2263,10 @@ async function publishNextNews() {
     if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
   }
 
-  // Görsel bulunamazsa: metin olarak gönder (atlamak yerine)
-  if (!chosenMedia.url && validItems.length > 0) {
-    chosenItem = chosenItem || validItems[0];
-    chosenMedia = { type: null, url: null };
-    console.log(`⚠️ Haber için görsel bulunamadı, metin olarak gönderilecek`);
+  // Görsel/video bulunamazsa haberi atla (metin olarak gönderme)
+  if (!chosenMedia.url) {
+    console.log(`⏭ [${feed.source}] Medyalı haber bulunamadı, atlanıyor.`);
+    return;
   }
 
   if (!chosenItem) return;
