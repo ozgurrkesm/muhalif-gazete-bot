@@ -208,7 +208,7 @@ async function tgLog(text) {
 const RSS_FEEDS = [
   // ── Muhalif / Bağımsız Haber Kaynakları ──────────────────────────────────
   {
-    url: 'https://news.google.com/rss/search?q=site:ankaajans.com&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://news.google.com/rss/search?q=ANKA+ajans+haber&hl=tr&gl=TR&ceid=TR:tr',
     label: '📡 ANKA Ajans',
     source: 'ANKA',
     type: 'google',
@@ -1481,14 +1481,11 @@ async function getInvidiousVideoUrl(videoId) {
 // ── 1. cobalt.tools → direkt MP4 URL al (indirme yok) ─────────────────────
 async function getCobaltDirectUrl(videoUrl) {
   const COBALT_INSTANCES = [
-    'https://api.cobalt.tools',
-    'https://cobalt.api.timelessnesses.me',
-    'https://cobalt.lunar.icu',
-    'https://cobalt-api.kwiatekmiki.com',
-    'https://cobalt.privacyredirect.com',
-    'https://cobalt.esmailelbob.xyz',
-    'https://cob.frge.io',
-  ];
+      // api.cobalt.tools JWT gerektiriyor (2026+), devre dışı
+      'https://cobalt.api.timelessnesses.me',
+      'https://cobalt-api.kwiatekmiki.com',
+      'https://cobalt.tools',
+    ];
 
   // cobalt v10+ API formatı
   const bodyV10 = JSON.stringify({
@@ -4005,7 +4002,7 @@ bot.onText(/\/saglik/, async (msg) => {
     if (cobaltUrl) {
       await send('✅ cobalt çalışıyor! URL: ' + cobaltUrl.slice(0, 80));
     } else {
-      await send('❌ cobalt çalışmıyor (tüm instance başarısız)');
+      await send('⚠️ cobalt kapalı/JWT gerekiyor — yt-dlp fallback aktif');
     }
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
