@@ -901,8 +901,8 @@ function extractWebVideo(html) {
   if (windowData) return windowData;
 
   // __NEXT_DATA__ veya __NUXT__ içindeki video URL (Next.js / Nuxt tabanlı siteler)
-  const nextData = html.match(/__(?:NEXT_DATA|NUXT)__[\s\S]{0,2000}?"(?:videoUrl|hlsUrl|mp4Url|streamUrl|videoSrc)"\s*:\s*"([^"\\]+\.(?:mp4|m3u8))"/)? [1];
-  if (nextData) return nextData;
+  const nextDataMatch = html.match(/"(?:videoUrl|hlsUrl|mp4Url|streamUrl|videoSrc)"\s*:\s*"([^"]+\.(?:mp4|m3u8))"/i);
+  if (nextDataMatch) return nextDataMatch[1];
 
   // Brightcove player (medya şirketleri tarafından yaygın kullanılır)
   const brightcove = html.match(/data-video-id=["']([^"']+)["'][\s\S]{0,300}?["'](https?:[^"']+\.(?:mp4|m3u8))["']/i)?.[2];
