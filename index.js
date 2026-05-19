@@ -2938,6 +2938,11 @@ bot.onText(/\/start/, (msg) => {
   );
 });
 
+bot.onText(/\/myid/, (msg) => {
+  const chatId = msg.chat.id;
+  bot.sendMessage(chatId, `🪪 Chat ID'niz:\n\n<code>${chatId}</code>\n\nBu sayıyı Railway'de <b>ADMIN_CHAT_ID</b> olarak kaydedin.`, { parse_mode: 'HTML' });
+});
+
 bot.onText(/\/admin/, (msg) => {
   const chatId = String(msg.chat.id);
   if (!isAdmin(chatId)) {
