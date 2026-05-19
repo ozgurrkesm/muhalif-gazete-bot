@@ -1178,69 +1178,7 @@ async function fetchSubjectImage(title) {
   return null;
 }
 
-  // ─── Makale sayfasından görsel topla (fetch tabanlı) ─────────────────────────
-  async function scrapePageImages(url) {
-    if (!url || url.includes('news.google.com')) return [];
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      let res = null;
-      try {
-        res = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0',
-            'Accept': 'text/html,application/xhtml+xml',
-          },
-        });
-      } finally { clearTimeout(timer); }
-      if (!res || !res.ok) return [];
-      const html = await res.text().catch(() => '');
-      if (!html) return [];
-      const results = [];
-      const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','button','arrow','spinner','1x1','tracking','favicon','placeholder','blank','default','social'];
-      const isSkip = (s) => SKIP.some(k => s.toLowerCase().includes(k));
-      const isImg = (s) => /jpe?g|png|webp/.test(s) || /image|photo|img|foto|resim/.test(s);
-      // og:image / twitter:image
-      const ogM = html.match(/property=.og:image[^>]+content=.([^"' >]{10,})/)
-               || html.match(/name=.twitter:image[^>]+content=.([^"' >]{10,})/)
-               || html.match(/content=.([^"' >]{10,})[^>]+property=.og:image/);
-      if (ogM && ogM[1] && ogM[1].startsWith('http')) results.push(ogM[1]);
-      // <img> src / data-src
-      const imgRe = /(?:src|data-src|data-lazy-src|data-original)="(https?:[^"]{15,})"/g;
-      let m;
-      while ((m = imgRe.exec(html)) !== null && results.length < 8) {
-        const src = m[1];
-        if (!isImg(src)) continue;
-        if (isSkip(src)) continue;
-        const dimMatch = src.match(/[_-]([0-9]+)x([0-9]+)[_.-]/);
-        if (dimMatch && (Number(dimMatch[1]) < 200 || Number(dimMatch[2]) < 150)) continue;
-        if (!results.includes(src)) results.push(src);
-      }
-      // srcset — en geniş URL
-      const srcsetRe = /srcset="([^"]+)"/g;
-      while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
-        const parts = m[1].split(',').map(p => p.trim().split(' '));
-        let best = null, bestW = 0;
-        for (const [u, w] of parts) {
-          if (!u || !u.startsWith('http')) continue;
-          if (isSkip(u)) continue;
-          const wv = w ? parseInt(w) : 0;
-          if (wv > bestW) { bestW = wv; best = u; }
-          else if (!best) best = u;
-        }
-        if (best && !results.includes(best)) results.push(best);
-      }
-      console.log('scrapePageImages: ' + results.length + ' gorsel — ' + url.slice(0, 50));
-      return results.slice(0, 5);
-    } catch (e) {
-      console.log('scrapePageImages hata: ' + (e.message || '').slice(0, 50));
-      return [];
-    }
-  }
-  
-
-  // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
+// ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
 function cleanTitle(title) {
   let t = (title || '').trim();
@@ -2308,32 +2246,23 @@ async function publishNowInstant() {
           }
         }
 
-        // ═══ 5. OG görsel yok → sayfayı tara → DuckDuckGo (metin ASLA) ══
+        // ═══ 5. Görsel yok → DuckDuckGo → atla (metin ASLA) ════════════
           if (sentType === 'none') {
-            if (!realUrl.includes('news.google.com')) {
-              tgLog(`🔍 Sayfa görseli aranıyor: ${realUrl.slice(0,50)}`);
-              const pageImgs = await scrapePageImages(realUrl).catch(() => []);
-              for (const imgUrl of pageImgs) {
-                try {
-                  await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption });
-                  sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-                  tgLog(`🖼 Sayfa görseli gönderildi`);
-                  break;
-                } catch { /* bu görsel çalışmadı */ }
+            tgLog('🔎 Görsel bulunamadı, DDG deneniyor: ' + title.slice(0,40));
+            const ddgImg = await fetchDuckDuckGoImage(title).catch(() => null);
+            if (ddgImg) {
+              try {
+                await bot.sendPhoto(CHANNEL_ID, ddgImg, { caption });
+                sentType = 'image';
+                mediaStats.image = (mediaStats.image || 0) + 1;
+                tgLog('🖼 DDG görseli gönderildi');
+              } catch (e) {
+                tgLog('❌ DDG görseli reddedildi: ' + (e.message || '').slice(0,60));
               }
             }
             if (sentType === 'none') {
-              tgLog(`🔎 DDG: ${title.slice(0,40)}`);
-              const ddgImg = await fetchDuckDuckGoImage(title).catch(() => null);
-              if (ddgImg) {
-                try {
-                  await bot.sendPhoto(CHANNEL_ID, ddgImg, { caption });
-                  sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-                  tgLog(`🖼 DDG görseli gönderildi`);
-                } catch { tgLog(`❌ DDG görseli reddedildi`); }
-              }
+              tgLog('⏭ Görsel bulunamadı — sıradaki habere geçiliyor');
             }
-            if (sentType === 'none') tgLog(`⏭ Görsel bulunamadı — sıradaki habere geçiliyor`);
           }
 
         if (sentType !== 'none') {
@@ -2616,28 +2545,22 @@ let publishingInProgress = false;
         sentType = 'image';
       }
     } else {
-        // Medya yok — sayfadan görsel ara (metin ASLA gönderilmez)
-        const _fbUrl = chosenItem.link || chosenItem.guid;
-        const _pageImgs = await scrapePageImages(_fbUrl).catch(() => []);
-        let _fbSent = false;
-        for (const imgUrl of _pageImgs) {
+        // Medya yok → DDG görsel dene → atla (metin ASLA)
+        const ddgImg2 = await fetchDuckDuckGoImage(title).catch(() => null);
+        if (ddgImg2) {
           try {
-            sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, sendOpts({ caption }));
-            sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-            _fbSent = true; break;
-          } catch { /* sıradaki */ }
-        }
-        if (!_fbSent) {
-          const _ddg = await fetchDuckDuckGoImage(title).catch(() => null);
-          if (_ddg) {
-            try {
-              sentMsg = await bot.sendPhoto(CHANNEL_ID, _ddg, sendOpts({ caption }));
-              sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-              _fbSent = true;
-            } catch { /* DDG de çalışmadı */ }
+            sentMsg = await bot.sendPhoto(CHANNEL_ID, ddgImg2, sendOpts({ caption }));
+            sentType = 'image';
+            mediaStats.image = (mediaStats.image || 0) + 1;
+            console.log('🖼 DDG görseli gönderildi (inner)');
+          } catch (e) {
+            console.log('❌ DDG reddedildi: ' + (e.message || '').slice(0,60));
+            sentType = 'skip';
           }
+        } else {
+          sentType = 'skip';
+          console.log('⏭ Görsel bulunamadı — haber atlandı');
         }
-        if (!_fbSent) { sentType = 'skip'; console.log('⏭ Görsel bulunamadı, atlandı'); }
       }
     }
   } catch {}
