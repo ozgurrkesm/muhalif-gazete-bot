@@ -183,6 +183,15 @@ function isAdmin(chatId) {
   return settings.adminChatIds.includes(id);
 }
 
+// Admin'e Telegram üzerinden log gönder (video/hata takibi için)
+async function tgLog(text) {
+  const adminId = ADMIN_CHAT_ID || settings.adminChatIds[0];
+  if (!adminId) return;
+  try {
+    await bot.sendMessage(adminId, `🔧 ${text.slice(0, 3000)}`);
+  } catch {}
+}
+
 // ─── RSS + YouTube Kaynakları ─────────────────────────────────────────────────
 
 const RSS_FEEDS = [
@@ -1430,41 +1439,79 @@ async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
 
   if (!videoId) return false;
   console.log(`🎬 YouTube akıllı gönderme: ${videoId}`);
+  tgLog(`🎬 Video deneniyor: ${videoId}`);
 
   // 1. cobalt.tools → direkt URL → Telegram
+  tgLog('1️⃣ cobalt.tools deneniyor...');
   const cobaltUrl = await getCobaltDirectUrl(videoUrl);
   if (cobaltUrl) {
+    tgLog(`cobalt URL alındı, Telegram'a gönderiliyor...`);
     const ok = await sendVideoByUrl(channelId, cobaltUrl, caption);
-    if (ok) return true;
-  }
+    if (ok) { tgLog('✅ cobalt ile video gönderildi!'); return true; }
+    tgLog('⚠️ cobalt URL Telegram tarafından reddedildi');
+  } else { tgLog('⚠️ cobalt URL alınamadı'); }
 
   // 2. yt-dlp -g → stream URL → Telegram
+  tgLog('2️⃣ yt-dlp stream URL deneniyor...');
   const streamUrl = await getYtdlpStreamUrl(videoUrl);
   if (streamUrl) {
     const ok = await sendVideoByUrl(channelId, streamUrl, caption);
-    if (ok) return true;
-  }
+    if (ok) { tgLog('✅ yt-dlp stream ile video gönderildi!'); return true; }
+    tgLog('⚠️ yt-dlp stream URL çalışmadı');
+  } else { tgLog('⚠️ yt-dlp stream URL alınamadı'); }
 
   // 3. Invidious stream URL → Telegram
+  tgLog('3️⃣ Invidious stream deneniyor...');
   const invUrl = await getInvidiousStreamUrl(videoId);
   if (invUrl) {
     const ok = await sendVideoByUrl(channelId, invUrl, caption);
-    if (ok) return true;
-  }
+    if (ok) { tgLog('✅ Invidious ile video gönderildi!'); return true; }
+    tgLog('⚠️ Invidious URL çalışmadı');
+  } else { tgLog('⚠️ Invidious URL alınamadı'); }
 
-  // 4. Son çare: eski yöntem (Railway indirir)
-  console.log('🔄 Son çare: dosya indirme...');
+  // 4. Dosya indirme (cobalt/Invidious/yt-dlp tam indirme)
+  tgLog('4️⃣ Dosya indirme deneniyor (cobalt → Invidious → yt-dlp)...');
   const filePath = await downloadYoutubeVideo(videoUrl);
   if (filePath) {
     try {
       await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
       try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+      tgLog('✅ Dosya indirip yükleme başarılı!');
       return true;
     } catch (e) {
+      tgLog(`⚠️ Dosya yükleme başarısız: ${e.message?.slice(0, 100)}`);
       try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
     }
+  } else { tgLog('⚠️ Dosya indirme de başarısız'); }
+
+  // 5. Thumbnail fallback — YouTube küçük resmiyle haber fotoğrafı gönder
+  tgLog('5️⃣ Thumbnail fallback: YouTube fotoğrafı gönderiliyor...');
+  const thumbUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+  const thumbCaption = `${caption}\n\n▶️ youtube.com/watch?v=${videoId}`;
+  try {
+    await bot.sendPhoto(channelId, thumbUrl, {
+      caption: thumbCaption.slice(0, 1024),
+      reply_markup: {
+        inline_keyboard: [[{ text: '▶️ YouTube\'da İzle', url: `https://www.youtube.com/watch?v=${videoId}` }]],
+      },
+    });
+    tgLog('✅ Thumbnail fallback ile gönderildi');
+    return true;
+  } catch (e2) {
+    // maxresdefault yoksa hqdefault dene
+    try {
+      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, {
+        caption: thumbCaption.slice(0, 1024),
+        reply_markup: {
+          inline_keyboard: [[{ text: '▶️ YouTube\'da İzle', url: `https://www.youtube.com/watch?v=${videoId}` }]],
+        },
+      });
+      tgLog('✅ hqdefault thumbnail ile gönderildi');
+      return true;
+    } catch {}
   }
 
+  tgLog('❌ Tüm yöntemler başarısız oldu!');
   return false;
 }
 
@@ -2911,13 +2958,13 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const msgId = query.message.message_id;
 
-  // Telegram'a hemen "aldım" yanıtı ver — UI donmasını önle
-  bot.answerCallbackQuery(query.id).catch(() => {});
-
   if (!isAdmin(chatId)) {
-    bot.sendMessage(query.message.chat.id, '❌ Admin yetkisi gerekli!').catch(() => {});
+    bot.answerCallbackQuery(query.id, { text: '❌ Admin yetkisi gerekli!' }).catch(() => {});
     return;
   }
+
+  // Her işlemi try-catch içinde çalıştır; hata olursa yine de query'yi yanıtla
+  try {
 
   if (data.startsWith('set_daterange_')) {
     const hours = parseInt(data.replace('set_daterange_', ''));
@@ -2983,7 +3030,7 @@ bot.on('callback_query', async (query) => {
 
   switch (data) {
     case 'admin_interval_menu':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `⏱ *Yayın Sıklığı*\n\nŞu an: *${settings.intervalMinutes} dakika*\n\nYeni süreyi seç:`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: intervalKeyboard() }
@@ -2991,7 +3038,7 @@ bot.on('callback_query', async (query) => {
       break;
 
     case 'admin_daterange_menu':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `📅 *Haber Yaş Aralığı*\n\nŞu an: *Son ${settings.maxAgeHours || 24} saat*\n\nKaç saatlik haberleri yayınlayalım?`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: dateRangeKeyboard() }
@@ -3001,7 +3048,7 @@ bot.on('callback_query', async (query) => {
     case 'admin_timewindow_menu': {
       const sh = String(settings.publishStartHour ?? 9).padStart(2, '0');
       const eh = String(settings.publishEndHour ?? 2).padStart(2, '0');
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `🕐 *Yayın Saati Ayarı*\n\nŞu an: *${sh}:00 – ${eh}:00*\n\nBaşlangıç veya bitiş saatini seç:`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowMenuKeyboard() }
@@ -3010,7 +3057,7 @@ bot.on('callback_query', async (query) => {
     }
 
     case 'admin_timewindow_start':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `🟢 *Yayın Başlangıç Saati*\n\nŞu an: *${String(settings.publishStartHour ?? 9).padStart(2,'0')}:00*`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowKeyboard('start') }
@@ -3018,7 +3065,7 @@ bot.on('callback_query', async (query) => {
       break;
 
     case 'admin_timewindow_end':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `🔴 *Yayın Bitiş Saati*\n\nŞu an: *${String(settings.publishEndHour ?? 2).padStart(2,'0')}:00*`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: timeWindowKeyboard('end') }
@@ -3026,7 +3073,7 @@ bot.on('callback_query', async (query) => {
       break;
 
     case 'admin_category_menu':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `📂 *Kategori Seçimi*\n\nŞu an: *${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}*\n\nHaberler bu kategoriden yayınlanır:`,
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: categoryKeyboard() }
@@ -3034,40 +3081,30 @@ bot.on('callback_query', async (query) => {
       break;
 
     case 'admin_publish_now': {
-        await bot.answerCallbackQuery(query.id, { text: '⚡ Çalışıyor...' });
-        let progressMsg;
-        try {
-          progressMsg = await bot.sendMessage(chatId, '⏳ Video aranıyor, lütfen bekleyin...');
-        } catch {}
-        publishNowInstant().then(async (resultMsg) => {
-          const text = resultMsg || '✅ Tamamlandı.';
-          try {
-            if (progressMsg) {
-              await bot.editMessageText(text, { chat_id: chatId, message_id: progressMsg.message_id });
-            } else {
-              await bot.sendMessage(chatId, text);
-            }
-          } catch { try { await bot.sendMessage(chatId, text); } catch {} }
-        }).catch(async (err) => {
-          const errText = '❌ Hata: ' + (err?.message || 'Bilinmeyen hata');
-          try {
-            if (progressMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: progressMsg.message_id });
-            else await bot.sendMessage(chatId, errText);
-          } catch {}
-        });
-        await bot.editMessageText(adminPanelText(), {
-          chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-          reply_markup: adminPanelKeyboard(),
-        });
-        break;
-      }
+      await bot.answerCallbackQuery(query.id, { text: '⚡ Başlatılıyor...' }).catch(() => {});
+      await bot.editMessageText(adminPanelText(), {
+        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+        reply_markup: adminPanelKeyboard(),
+      }).catch(() => {});
+      const progressMsg = await bot.sendMessage(chatId, '⏳ Video/haber aranıyor, bekle...').catch(() => null);
+      publishNowInstant().then(async (resultMsg) => {
+        const text = resultMsg || '✅ Yayınlandı.';
+        if (progressMsg) bot.editMessageText(text, { chat_id: chatId, message_id: progressMsg.message_id }).catch(() => bot.sendMessage(chatId, text).catch(() => {}));
+        else bot.sendMessage(chatId, text).catch(() => {});
+      }).catch(async (err) => {
+        const errText = '❌ Hata: ' + (err?.message || String(err)).slice(0, 200);
+        if (progressMsg) bot.editMessageText(errText, { chat_id: chatId, message_id: progressMsg.message_id }).catch(() => bot.sendMessage(chatId, errText).catch(() => {}));
+        else bot.sendMessage(chatId, errText).catch(() => {});
+      });
+      break;
+    }
 
     case 'admin_toggle_pause':
       settings.paused = !settings.paused;
       saveSettings();
       await bot.answerCallbackQuery(query.id, {
         text: settings.paused ? '⏸ Bot duraklatıldı' : '▶️ Bot devam ediyor',
-      });
+      }).catch(() => {});
       await bot.editMessageText(adminPanelText(), {
         chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
         reply_markup: adminPanelKeyboard(),
@@ -3086,7 +3123,7 @@ bot.on('callback_query', async (query) => {
         `⏱ Yayın aralığı: *${settings.intervalMinutes} dk*\n` +
         `📂 Kategori: *${CATEGORY_LABELS[settings.activeCategory] || settings.activeCategory}*\n` +
         `📰 Kaynak sayısı: *${RSS_FEEDS.length}*`;
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(statsText, {
         chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_back' }]] },
@@ -3096,7 +3133,7 @@ bot.on('callback_query', async (query) => {
 
     case 'admin_sources': {
       const list = RSS_FEEDS.map((f, i) => `${i + 1}. ${f.label} [${f.category}]`).join('\n');
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(
         `📰 *Aktif Kaynaklar (${RSS_FEEDS.length})*\n\n${list}`,
         {
@@ -3108,7 +3145,7 @@ bot.on('callback_query', async (query) => {
     }
 
     case 'admin_back':
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(adminPanelText(), {
         chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
         reply_markup: adminPanelKeyboard(),
@@ -3116,7 +3153,12 @@ bot.on('callback_query', async (query) => {
       break;
 
     default:
-      await bot.answerCallbackQuery(query.id);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+  }
+
+  } catch (err) {
+    console.error('❌ callback_query hatası:', err?.message);
+    bot.answerCallbackQuery(query.id).catch(() => {});
   }
 });
 
