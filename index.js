@@ -1093,15 +1093,8 @@ function isValidNewsItem(item, feed) {
     return false;
   }
 
-  // YouTube haberleri zaten video — medya kontrolü gerekmez
-  if (feed.type === 'youtube') return true;
-
-  // RSS haberlerde resim veya video ZORUNLU — ikisi de yoksa atla
-  if (!itemHasImage(item) && !itemHasVideo(item)) {
-    console.log(`⏭ Medyasız haber atlandı: ${title.slice(0, 50)}`);
-    return false;
-  }
-
+  // Medya kontrolü artık yayın aşamasında yapılıyor (og:image çekimi sonrası)
+  // RSS'te medya olmasa da web'den og:image çekilebilir
   return true;
 }
 
@@ -2086,6 +2079,7 @@ async function publishNowInstant() {
 
         // ═══ 4. Resim gönder ════════════════════════════════════════════
         if (sentType === 'none' && ogImg) {
+          tgLog(`🖼 Görsel gönderiliyor: ${ogImg.slice(0, 60)}`);
           if (ogImg2) {
             try {
               await bot.sendMediaGroup(CHANNEL_ID, [
@@ -2093,11 +2087,14 @@ async function publishNowInstant() {
                 { type: 'photo', media: ogImg2 },
               ]);
               sentType = 'image'; mediaStats.image++;
-            } catch {
-              try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
+            } catch (e1) {
+              tgLog(`⚠️ Media group hata: ${e1.message?.slice(0,80)}, tek foto deneniyor...`);
+              try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
+              catch (e2) { tgLog(`❌ Foto gönderilemedi: ${e2.message?.slice(0,100)}`); }
             }
           } else {
-            try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
+            try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
+            catch (e) { tgLog(`❌ Foto gönderilemedi: ${e.message?.slice(0,100)}`); }
           }
         }
 
@@ -2362,15 +2359,9 @@ async function publishNextNews() {
         sentType = 'image';
       }
     } else {
-      // Medya yok — metin olarak gönder
-      try {
-        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts());
-        sentType = 'text';
-        console.log('📝 Görsel yok, metin olarak gönderildi');
-      } catch (e) {
-        console.error(`❌ Metin gönderme hatası: ${e.message}`);
-        sentType = 'skip';
-      }
+      // Medya yok — haberi atla (metin olarak gönderme)
+      sentType = 'skip';
+      console.log('⏭ Medya yok, haber atlanıyor (metin gönderme kapalı)');
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
