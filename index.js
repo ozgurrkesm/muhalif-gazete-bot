@@ -78,6 +78,14 @@ import OpenAI from 'openai';
 
 dotenv.config();
 
+// ─── Yakalanmayan hataları yakala — rss-parser timeout bug'ı botu çökertiyor ──
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ Yakalanmayan hata (bot devam ediyor):', err.message);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ Yakalanmayan promise reddi (bot devam ediyor):', reason?.message || reason);
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
