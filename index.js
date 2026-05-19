@@ -1458,65 +1458,39 @@ async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
     videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
     videoUrl.match(/shorts\/([^?/]+)/)?.[1];
 
-  if (!videoId) return false;
-  console.log(`🎬 YouTube akıllı gönderme: ${videoId}`);
-  tgLog(`🎬 Video deneniyor: ${videoId}`);
+  if (!videoId) { tgLog('❌ YouTube video ID çıkarılamadı'); return false; }
+  console.log(`🎬 YouTube gönderme: ${videoId}`);
+  tgLog(`🎬 YouTube video: ${videoId}`);
 
-  // 1. cobalt.tools → direkt URL → Telegram
-  tgLog('1️⃣ cobalt.tools deneniyor...');
+  // 1. Thumbnail — her zaman çalışır, Railway IP engeline takılmaz
+  const safeThumbCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1024);
+  for (const tq of ['maxresdefault', 'hqdefault', 'mqdefault', 'sddefault']) {
+    try {
+      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/${tq}.jpg`, { caption: safeThumbCaption });
+      tgLog(`✅ YouTube thumbnail (${tq}) gönderildi`);
+      return true;
+    } catch (e) {
+      tgLog(`⚠️ Thumbnail ${tq} hata: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  // 2. cobalt.tools → direkt MP4 URL → Telegram (thumbnail başarısız olursa)
+  tgLog('2️⃣ cobalt.tools deneniyor...');
   const cobaltUrl = await getCobaltDirectUrl(videoUrl);
   if (cobaltUrl) {
-    tgLog(`cobalt URL alındı, Telegram'a gönderiliyor...`);
     const ok = await sendVideoByUrl(channelId, cobaltUrl, caption);
     if (ok) { tgLog('✅ cobalt ile video gönderildi!'); return true; }
-    tgLog('⚠️ cobalt URL Telegram tarafından reddedildi');
-  } else { tgLog('⚠️ cobalt URL alınamadı'); }
+  }
 
-  // 2. yt-dlp -g → stream URL → Telegram
-  tgLog('2️⃣ yt-dlp stream URL deneniyor...');
-  const streamUrl = await getYtdlpStreamUrl(videoUrl);
-  if (streamUrl) {
-    const ok = await sendVideoByUrl(channelId, streamUrl, caption);
-    if (ok) { tgLog('✅ yt-dlp stream ile video gönderildi!'); return true; }
-    tgLog('⚠️ yt-dlp stream URL çalışmadı');
-  } else { tgLog('⚠️ yt-dlp stream URL alınamadı'); }
-
-  // 3. Invidious stream URL → Telegram
+  // 3. Invidious stream URL
   tgLog('3️⃣ Invidious stream deneniyor...');
   const invUrl = await getInvidiousStreamUrl(videoId);
   if (invUrl) {
     const ok = await sendVideoByUrl(channelId, invUrl, caption);
     if (ok) { tgLog('✅ Invidious ile video gönderildi!'); return true; }
-    tgLog('⚠️ Invidious URL çalışmadı');
-  } else { tgLog('⚠️ Invidious URL alınamadı'); }
-
-  // 4. Dosya indirme (cobalt/Invidious/yt-dlp tam indirme)
-  tgLog('4️⃣ Dosya indirme deneniyor (cobalt → Invidious → yt-dlp)...');
-  const filePath = await downloadYoutubeVideo(videoUrl);
-  if (filePath) {
-    try {
-      await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
-      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
-      tgLog('✅ Dosya indirip yükleme başarılı!');
-      return true;
-    } catch (e) {
-      tgLog(`⚠️ Dosya yükleme başarısız: ${e.message?.slice(0, 100)}`);
-      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
-    }
-  } else { tgLog('⚠️ Dosya indirme de başarısız'); }
-
-  // 5. Thumbnail fallback — YouTube küçük resmiyle haber fotoğrafı gönder (buton/link yok)
-  tgLog('5️⃣ Thumbnail fallback: YouTube fotoğrafı gönderiliyor...');
-  const safeThumbCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1024);
-  for (const tq of ['maxresdefault', 'hqdefault', 'mqdefault']) {
-    try {
-      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/${tq}.jpg`, { caption: safeThumbCaption });
-      tgLog(`✅ Thumbnail (${tq}) gönderildi`);
-      return true;
-    } catch {}
   }
 
-  tgLog('❌ Tüm yöntemler başarısız oldu!');
+  tgLog('❌ YouTube: tüm yöntemler başarısız');
   return false;
 }
 
