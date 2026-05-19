@@ -91,11 +91,6 @@ const aiClient = new OpenAI({
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 
-// ─── Video Kaynak Kanalları ──────────────────────────────────────────────────
-// Bu kanallara bot admin olarak eklenmeli. Gelen videolar @muhalif_gazete'ye kopyalanır.
-const VIDEO_SOURCE_CHANNELS = ['asayisberkemaltr'];
-let lastVideoForwardTime = 0;
-const VIDEO_FORWARD_MIN_GAP_MS = 3 * 60 * 1000; // Min 3 dk arayla video
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
@@ -3049,6 +3044,7 @@ bot.onText(/\/start/, (msg) => {
     `/haber — Anında haber yayınla\n` +
     `/kaynaklar — Haber kaynakları\n` +
     `/durum — Bot durumu`
+`/video <url> — URL'den video gönder`
   );
 });
 
@@ -3539,6 +3535,47 @@ bot.onText(/\/saglik/, async (msg) => {
 });
 
 
+  // ── /video <url> — URL'den video indir ve kanala gönder ─────────────────────
+  bot.onText(/^\/video\s+(https?:\/\/\S+)/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+    if (!isAdmin(chatId)) return;
+    const videoUrl = (match[1] || '').trim();
+    if (!videoUrl) {
+      bot.sendMessage(chatId, '⚠️ Kullanım: /video <url>\nÖrnek: /video https://youtube.com/watch?v=xxx');
+      return;
+    }
+    bot.sendMessage(chatId, `⏳ Video işleniyor...\n${videoUrl.slice(0, 80)}`);
+    try {
+      const isYt = /youtube\.com|youtu\.be/i.test(videoUrl);
+      let ok = false;
+      if (isYt) {
+        ok = await sendYouTubeVideoSmart(CHANNEL_ID, videoUrl, '📹 Video Haber');
+      } else {
+        // Direkt URL veya haber sayfası — web video dene
+        ok = await sendWebVideo(CHANNEL_ID, videoUrl, '📹 Video Haber', null);
+        if (!ok) {
+          // yt-dlp ile genel indirme dene
+          const gPath = await downloadGenericWithYtdlp(videoUrl).catch(() => null);
+          if (gPath) {
+            try {
+              await bot.sendVideo(CHANNEL_ID, { source: gPath }, { caption: '📹 Video Haber', supports_streaming: true });
+              try { fs.rmSync(require('path').dirname(gPath), { recursive: true, force: true }); } catch {}
+              ok = true;
+            } catch {}
+          }
+        }
+      }
+      if (ok) {
+        mediaStats.video++;
+        bot.sendMessage(chatId, '✅ Video kanala gönderildi!');
+      } else {
+        bot.sendMessage(chatId, '❌ Video gönderilemedi. URL geçerli bir video içermiyor olabilir.');
+      }
+    } catch (err) {
+      bot.sendMessage(chatId, '❌ Hata: ' + err.message?.slice(0, 200));
+    }
+  });
+
   bot.onText(/\/debug/, async (msg) => {
     const chatId = msg.chat.id;
     if (!isAdmin(chatId)) return;
@@ -3616,60 +3653,6 @@ bot.onText(/\/saglik/, async (msg) => {
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
   });
-// ─── Kaynak Kanaldan Video Aktar ─────────────────────────────────────────────
-bot.on('channel_post', async (msg) => {
-  try {
-    const chatUsername = (msg.chat.username || '').toLowerCase();
-    if (!VIDEO_SOURCE_CHANNELS.includes(chatUsername)) return;
-
-    // Sadece video veya animasyon içeren mesajları al
-    const hasVideo = !!(msg.video || msg.animation || (msg.document && msg.document.mime_type?.startsWith('video/')));
-    if (!hasVideo) return;
-
-    // Flood önleme — çok sık video gönderme
-    const now = Date.now();
-    if (now - lastVideoForwardTime < VIDEO_FORWARD_MIN_GAP_MS) {
-      console.log(`⏭ Video kanalı: flood önleme (son videodan ${Math.round((now - lastVideoForwardTime)/1000)}s geçti)`);
-      return;
-    }
-
-    // Orijinal caption varsa al, yoksa boş bırak (AI ekleyebilir)
-    const originalCaption = msg.caption || msg.text || '';
-    const title = originalCaption.slice(0, 100) || 'Video Haber';
-
-    // Duplicate kontrolü
-    const dedupKey = `channel_post_${msg.chat.id}_${msg.message_id}`;
-    if (publishedUrls.has(dedupKey)) return;
-
-    console.log(`📹 [${chatUsername}] Video mesajı alındı: ${title.slice(0,60)}`);
-
-    // AI ile kısa özet/başlık üret
-    let caption = '';
-    if (originalCaption.length > 5) {
-      const aiSum = await summarizeNews(title, originalCaption).catch(() => null);
-      const catTag = detectCategory(title, originalCaption);
-      const catEmoji = catTag ? `${catTag} ` : '📹 ';
-      caption = stripLinks(`${catEmoji}${title}`);
-      if (aiSum && aiSum.length > 5) caption += `
-
-${cleanArrows(stripLinks(aiSum))}`;
-    } else {
-      caption = '📹 Video Haber';
-    }
-    if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
-
-    // Mesajı kopyala (orijinal sender gizlenir, bot göndermiş gibi görünür)
-    await bot.copyMessage(CHANNEL_ID, msg.chat.id, msg.message_id, { caption });
-    publishedUrls.add(dedupKey);
-    persistPublishedUrls();
-    lastVideoForwardTime = now;
-    mediaStats.video++;
-    console.log(`✅ [${chatUsername}] Video @muhalif_gazete'ye aktarıldı`);
-  } catch (err) {
-    console.error(`❌ channel_post hatası: ${err.message}`);
-  }
-});
-
 bot.on('polling_error', (err) => {
   trackError('polling', err.message);
   console.error(`⚠️ Polling hatası: ${err.message}`);
