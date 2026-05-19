@@ -1512,29 +1512,13 @@ async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
     }
   } else { tgLog('⚠️ Dosya indirme de başarısız'); }
 
-  // 5. Thumbnail fallback — YouTube küçük resmiyle haber fotoğrafı gönder
+  // 5. Thumbnail fallback — YouTube küçük resmiyle haber fotoğrafı gönder (buton/link yok)
   tgLog('5️⃣ Thumbnail fallback: YouTube fotoğrafı gönderiliyor...');
-  const thumbUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-  const thumbCaption = `${caption}\n\n▶️ youtube.com/watch?v=${videoId}`;
-  try {
-    await bot.sendPhoto(channelId, thumbUrl, {
-      caption: thumbCaption.slice(0, 1024),
-      reply_markup: {
-        inline_keyboard: [[{ text: '▶️ YouTube\'da İzle', url: `https://www.youtube.com/watch?v=${videoId}` }]],
-      },
-    });
-    tgLog('✅ Thumbnail fallback ile gönderildi');
-    return true;
-  } catch (e2) {
-    // maxresdefault yoksa hqdefault dene
+  const safeThumbCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1024);
+  for (const tq of ['maxresdefault', 'hqdefault', 'mqdefault']) {
     try {
-      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`, {
-        caption: thumbCaption.slice(0, 1024),
-        reply_markup: {
-          inline_keyboard: [[{ text: '▶️ YouTube\'da İzle', url: `https://www.youtube.com/watch?v=${videoId}` }]],
-        },
-      });
-      tgLog('✅ hqdefault thumbnail ile gönderildi');
+      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/${tq}.jpg`, { caption: safeThumbCaption });
+      tgLog(`✅ Thumbnail (${tq}) gönderildi`);
       return true;
     } catch {}
   }
@@ -2073,54 +2057,58 @@ async function publishNowInstant() {
         // ═══ Google News → gerçek URL ════════════════════════════════════
         let realUrl = url;
         if (url.includes('news.google.com')) {
-          console.log(`🔗 [ŞY] URL çözülüyor...`);
+          tgLog(`🔗 URL çözülüyor...`);
           realUrl = (await resolveGoogleNewsUrl(url)) || url;
-          console.log(`🔗 [ŞY] → ${realUrl.slice(0, 80)}`);
+          tgLog(`🔗 → ${realUrl.slice(0, 80)}`);
         }
 
-        // ═══ Haber sitesinden video gönder (yt-dlp + HTML + YouTube embed) ═
-        if (!realUrl.includes('news.google.com')) {
-          console.log(`🎬 [ŞY] Video aranıyor: ${realUrl.slice(0, 70)}`);
-          const ok = await sendArticleVideoSmart(CHANNEL_ID, realUrl, caption);
+        const articleUrl = realUrl.includes('news.google.com') ? null : realUrl;
+
+        // ═══ 1. Önce og:image çek (hızlı) ══════════════════════════════
+        let ogImg = null;
+        let ogImg2 = null;
+        if (articleUrl) {
+          tgLog(`🖼 Görsel aranıyor...`);
+          const ogMeta = await fetchOgMeta(articleUrl);
+          const rssMedia = extractMedia(item);
+          if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+          ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+          ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
+        }
+
+        // ═══ 2. Sayfadaki gömülü video var mı? ══════════════════════════
+        let articleVidUrl = null;
+        if (sentType === 'none' && articleUrl) {
+          articleVidUrl = await fetchArticleHtmlAndExtractVideo(articleUrl);
+          if (articleVidUrl) tgLog(`🎬 Sayfa videosu bulundu: ${articleVidUrl.slice(0, 60)}`);
+        }
+
+        // ═══ 3. Video gönder (doğrudan, indirerek) ══════════════════════
+        if (sentType === 'none' && articleVidUrl) {
+          const ok = await sendWebVideo(CHANNEL_ID, articleVidUrl, caption);
           if (ok) { sentType = 'video'; mediaStats.video++; }
         }
 
-        // ═══ URL çözülemediyse kaynak adıyla YouTube araması ═════════════
-        if (sentType === 'none' && sourceName) {
-          console.log(`🔍 [ŞY] YouTube araması: "${sourceName}"`);
-          const ytId = await searchYouTubeByTitle(title, sourceName);
-          if (ytId) {
-            const ok = await sendYouTubeVideoSmart(CHANNEL_ID, `https://www.youtube.com/watch?v=${ytId}`, caption);
-            if (ok) { sentType = 'video'; mediaStats.video++; }
-          }
-        }
-
-        // ═══ Resim fallback ══════════════════════════════════════════════
-        if (sentType === 'none') {
-          const ogMeta = await fetchOgMeta(realUrl);
-          const rssMedia = extractMedia(item);
-          if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
-          const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
-          const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
-
-          if (img1 && img2) {
+        // ═══ 4. Resim gönder ════════════════════════════════════════════
+        if (sentType === 'none' && ogImg) {
+          if (ogImg2) {
             try {
               await bot.sendMediaGroup(CHANNEL_ID, [
-                { type: 'photo', media: img1, caption },
-                { type: 'photo', media: img2 },
+                { type: 'photo', media: ogImg, caption },
+                { type: 'photo', media: ogImg2 },
               ]);
               sentType = 'image'; mediaStats.image++;
             } catch {
-              try { await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
+              try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
             }
-          } else if (img1) {
-            try { await bot.sendPhoto(CHANNEL_ID, img1, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
+          } else {
+            try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; } catch {}
           }
         }
 
-        // ═══ Son çare metin ══════════════════════════════════════════════
+        // ═══ 5. Görsel de yok — atla (metin gönderme) ═══════════════════
         if (sentType === 'none') {
-          try { await bot.sendMessage(CHANNEL_ID, caption); sentType = 'text'; mediaStats.text++; } catch {}
+          tgLog(`⏭ Medya bulunamadı, sonraki deneniyor...`);
         }
 
         if (sentType !== 'none') {
