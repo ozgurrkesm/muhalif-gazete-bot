@@ -2901,16 +2901,33 @@ bot.on('callback_query', async (query) => {
       break;
 
     case 'admin_publish_now': {
-      await bot.answerCallbackQuery(query.id, { text: '⚡ Haber aranıyor, video öncelikli...' });
-      publishNowInstant().then(async (resultMsg) => {
-        try { await bot.sendMessage(chatId, resultMsg || '✅ Tamamlandı.'); } catch {}
-      }).catch(() => {});
-      await bot.editMessageText(adminPanelText(), {
-        chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
-        reply_markup: adminPanelKeyboard(),
-      });
-      break;
-    }
+        await bot.answerCallbackQuery(query.id, { text: '⚡ Çalışıyor...' });
+        let progressMsg;
+        try {
+          progressMsg = await bot.sendMessage(chatId, '⏳ Video aranıyor, lütfen bekleyin...');
+        } catch {}
+        publishNowInstant().then(async (resultMsg) => {
+          const text = resultMsg || '✅ Tamamlandı.';
+          try {
+            if (progressMsg) {
+              await bot.editMessageText(text, { chat_id: chatId, message_id: progressMsg.message_id });
+            } else {
+              await bot.sendMessage(chatId, text);
+            }
+          } catch { try { await bot.sendMessage(chatId, text); } catch {} }
+        }).catch(async (err) => {
+          const errText = '❌ Hata: ' + (err?.message || 'Bilinmeyen hata');
+          try {
+            if (progressMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: progressMsg.message_id });
+            else await bot.sendMessage(chatId, errText);
+          } catch {}
+        });
+        await bot.editMessageText(adminPanelText(), {
+          chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+          reply_markup: adminPanelKeyboard(),
+        });
+        break;
+      }
 
     case 'admin_toggle_pause':
       settings.paused = !settings.paused;
@@ -3185,6 +3202,84 @@ bot.onText(/\/saglik/, async (msg) => {
   bot.sendMessage(msg.chat.id, text, { parse_mode: 'Markdown' });
 });
 
+
+  bot.onText(/\/debug/, async (msg) => {
+    const chatId = msg.chat.id;
+    if (!isAdmin(chatId)) return;
+
+    const send = (text) => bot.sendMessage(chatId, text).catch(() => {});
+
+    await send('🔍 *Debug başlatıldı...*\n\nHer adım raporlanacak.', { parse_mode: 'Markdown' });
+
+    // 1. yt-dlp kontrolü
+    await send('⏳ 1/5 yt-dlp kontrol ediliyor...');
+    try {
+      const ytdlpResult = await new Promise((resolve) => {
+        const proc = spawn(YTDLP_BIN, ['--version']);
+        let out = '';
+        proc.stdout.on('data', d => { out += d; });
+        proc.on('close', code => resolve(code === 0 ? '✅ yt-dlp: ' + out.trim() : '❌ yt-dlp hata kodu: ' + code));
+        proc.on('error', e => resolve('❌ yt-dlp spawn hatası: ' + e.message));
+        setTimeout(() => { proc.kill(); resolve('❌ yt-dlp timeout'); }, 8000);
+      });
+      await send(ytdlpResult);
+    } catch (e) { await send('❌ yt-dlp: ' + e.message); }
+
+    // 2. yt-dlp path
+    await send('⏳ 2/5 yt-dlp path: ' + YTDLP_BIN);
+
+    // 3. RSS feed testi
+    await send('⏳ 3/5 RSS feed test ediliyor...');
+    try {
+      const testFeed = RSS_FEEDS.find(f => f.type !== 'youtube') || RSS_FEEDS[0];
+      const items = await fetchFeed(testFeed);
+      if (items && items.length > 0) {
+        const item = items[0];
+        const url = item.link || item.guid;
+        await send('✅ RSS feed çalışıyor: ' + (item.title || '').slice(0, 60) + '\n URL: ' + (url || '').slice(0, 80));
+
+        // 4. Google News URL çözme
+        if (url && url.includes('news.google.com')) {
+          await send('⏳ 4/5 Google News URL çözülüyor...');
+          const resolved = await resolveGoogleNewsUrl(url);
+          if (resolved && !resolved.includes('google.com')) {
+            await send('✅ URL çözüldü: ' + resolved.slice(0, 100));
+
+            // 5. yt-dlp -g testi
+            await send('⏳ 5/5 yt-dlp -g video URL testi: ' + resolved.slice(0, 60));
+            const streamUrl = await getYtdlpStreamUrl(resolved);
+            if (streamUrl) {
+              await send('✅ yt-dlp -g BAŞARILI!\n URL: ' + streamUrl.slice(0, 100));
+            } else {
+              await send('❌ yt-dlp -g başarısız (video bulunamadı veya site desteklenmiyor)');
+            }
+          } else {
+            await send('❌ Google News URL çözülemedi! resolved: ' + (resolved || 'null'));
+            await send('⏳ 5/5 Kaynak URL ile yt-dlp -g testi: ' + url.slice(0, 60));
+            const streamUrl = await getYtdlpStreamUrl(url);
+            await send(streamUrl ? '✅ yt-dlp -g BAŞARILI: ' + streamUrl.slice(0, 80) : '❌ yt-dlp -g başarısız');
+          }
+        } else if (url) {
+          await send('⏳ 4-5/5 Direkt URL ile yt-dlp -g: ' + (url || '').slice(0, 80));
+          const streamUrl = await getYtdlpStreamUrl(url);
+          await send(streamUrl ? '✅ yt-dlp -g BAŞARILI: ' + streamUrl.slice(0, 80) : '❌ yt-dlp -g başarısız');
+        }
+      } else {
+        await send('❌ RSS feed boş geldi: ' + testFeed.label);
+      }
+    } catch (e) { await send('❌ RSS/test hatası: ' + e.message); }
+
+    // 6. cobalt test
+    await send('⏳ cobalt.tools testi...');
+    const cobaltUrl = await getCobaltDirectUrl('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    if (cobaltUrl) {
+      await send('✅ cobalt çalışıyor! URL: ' + cobaltUrl.slice(0, 80));
+    } else {
+      await send('❌ cobalt çalışmıyor (tüm instance başarısız)');
+    }
+
+    await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
+  });
 bot.on('polling_error', (err) => {
   trackError('polling', err.message);
   console.error(`⚠️ Polling hatası: ${err.message}`);
