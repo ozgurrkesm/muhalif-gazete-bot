@@ -1163,60 +1163,255 @@ async function getInvidiousVideoUrl(videoId) {
 
 // ─── cobalt.tools API ile YouTube/web video indir ─────────────────────────────
 // Cobalt kendi altyapısından indirir — Railway datacenter IP'si YouTube'u bloklasa da çalışır
-async function downloadFromCobalt(videoUrl) {
+
+// ═══════════════════════════════════════════════════════════════════════════
+// VİDEO SİSTEMİ — URL-önce yaklaşım
+// Railway videoyu indirmez → Telegram'a URL verir → Telegram kendi sunucusundan indirir
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 1. cobalt.tools → direkt MP4 URL al (indirme yok) ─────────────────────
+async function getCobaltDirectUrl(videoUrl) {
   const COBALT_INSTANCES = [
     'https://api.cobalt.tools',
     'https://cobalt.api.timelessnesses.me',
     'https://cobalt.lunar.icu',
   ];
+  const body = JSON.stringify({
+    url: videoUrl,
+    videoQuality: '720',
+    downloadMode: 'auto',
+    youtubeVideoCodec: 'h264',
+  });
+
   for (const instance of COBALT_INSTANCES) {
     try {
-      console.log(`🌐 Cobalt deniyor: ${instance}`);
-      // POST isteği gönder
-      const body = JSON.stringify({
-        url: videoUrl,
-        videoQuality: '720',
-        downloadMode: 'auto',
-        youtubeVideoCodec: 'h264',
-      });
-      const cobaltUrl = new URL('/', instance);
+      const cobaltHost = new URL(instance);
       const data = await new Promise((resolve, reject) => {
-        const req = https.request(
-          { hostname: cobaltUrl.hostname, path: '/', method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
-          (res) => {
-            let raw = '';
-            res.on('data', c => { raw += c; });
-            res.on('end', () => {
-              try { resolve(JSON.parse(raw)); }
-              catch { reject(new Error('JSON parse hatası')); }
-            });
-          }
-        );
+        const reqOpts = {
+          hostname: cobaltHost.hostname,
+          port: cobaltHost.port || 443,
+          path: '/',
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'Content-Length': Buffer.byteLength(body),
+            'User-Agent': 'Mozilla/5.0',
+          },
+        };
+        const req = https.request(reqOpts, (res) => {
+          let raw = '';
+          res.on('data', c => { raw += c; if (raw.length > 50000) res.destroy(); });
+          res.on('end', () => { try { resolve(JSON.parse(raw)); } catch { reject(new Error('json')); } });
+        });
         req.on('error', reject);
-        setTimeout(() => req.destroy(new Error('timeout')), 15000);
+        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, 12000);
+        req.on('close', () => clearTimeout(t));
         req.write(body); req.end();
       });
 
-      if (!data || !data.url || data.status === 'error') {
-        console.log(`⚠️ Cobalt ${instance}: ${data?.error?.code || 'yanıt yok'}`);
-        continue;
+      if (data && data.url && data.status !== 'error' && data.status !== 'redirect_error') {
+        console.log(`✅ cobalt URL (${data.status}): ${data.url.slice(0, 70)}`);
+        return data.url;
       }
-
-      console.log(`✅ Cobalt URL alındı (${data.status}): ${data.url.slice(0, 60)}`);
-      const tmpDir = path.join(os.tmpdir(), `cobalt_${Date.now()}_${Math.random().toString(36).slice(2)}`);
-      try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
-      const filePath = path.join(tmpDir, data.filename || 'video.mp4');
-      await httpsDownloadToFile(data.url, filePath, MAX_VIDEO_SIZE_BYTES, instance, 180000);
-      const stat = fs.statSync(filePath);
-      if (stat.size < 50000) { console.log(`⚠️ Cobalt: dosya çok küçük (${stat.size} byte)`); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} continue; }
-      console.log(`✅ Cobalt indirme başarılı: ${Math.round(stat.size/1024/1024)}MB`);
-      return filePath;
     } catch (e) {
-      console.log(`⚠️ Cobalt ${instance}: ${e.message?.slice(0, 60)}`);
+      console.log(`⚠️ cobalt ${instance}: ${e.message?.slice(0, 40)}`);
     }
   }
   return null;
+}
+
+// ── 2. yt-dlp -g → direkt stream URL al (indirme yok, sadece URL çıkar) ────
+async function getYtdlpStreamUrl(videoUrl) {
+  return new Promise((resolve) => {
+    const args = [
+      '-g',
+      '--no-playlist',
+      '--extractor-args', 'youtube:player_client=ios,tv_embedded',
+      '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best',
+      '--no-check-certificate',
+      '--geo-bypass',
+      '--match-filter', 'duration < 600',
+      '--no-warnings',
+      videoUrl,
+    ];
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
+
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', d => { stdout += d; });
+    proc.stderr.on('data', d => { stderr += d; });
+
+    const killTimer = setTimeout(() => { proc.kill('SIGKILL'); resolve(null); }, 30000);
+    proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
+    proc.on('close', code => {
+      clearTimeout(killTimer);
+      if (code !== 0) { console.log(`⚠️ yt-dlp -g başarısız: ${stderr.slice(-100)}`); resolve(null); return; }
+      // Çıktıda birden fazla URL olabilir (video+audio), ilkini al
+      const urls = stdout.trim().split('\n').filter(l => l.startsWith('http'));
+      if (urls.length > 0) {
+        console.log(`✅ yt-dlp -g URL: ${urls[0].slice(0, 70)}`);
+        resolve(urls[0]);
+      } else {
+        resolve(null);
+      }
+    });
+  });
+}
+
+// ── 3. Invidious'tan direkt stream URL al (Railway indirmez, sadece URL) ────
+async function getInvidiousStreamUrl(videoId) {
+  for (const instance of INVIDIOUS_INSTANCES.slice(0, 5)) {
+    try {
+      // itag=22 = 720p mp4 (video+audio birleşik)
+      const proxyUrl = `${instance}/latest_version?id=${videoId}&itag=22`;
+      // HEAD isteği ile URL'nin gerçek hedefini bul
+      const finalUrl = await new Promise((resolve, reject) => {
+        const u = new URL(proxyUrl);
+        const req = https.request({
+          hostname: u.hostname, port: u.port || 443,
+          path: u.pathname + u.search, method: 'HEAD',
+          headers: { 'User-Agent': 'Mozilla/5.0' },
+        }, (res) => {
+          // Redirect varsa son URL'yi al
+          if (res.headers.location) { resolve(res.headers.location); return; }
+          // Redirect yoksa doğrudan bu URL kullanılabilir
+          if (res.statusCode === 200) { resolve(proxyUrl); return; }
+          reject(new Error(`HTTP ${res.statusCode}`));
+        });
+        req.on('error', reject);
+        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, 8000);
+        req.on('close', () => clearTimeout(t));
+        req.end();
+      });
+      if (finalUrl && finalUrl.startsWith('http')) {
+        // googlevideo.com ise mükemmel — Telegram doğrudan indirebilir
+        console.log(`✅ Invidious stream URL: ${finalUrl.slice(0, 70)}`);
+        return finalUrl;
+      }
+    } catch (e) {
+      console.log(`⚠️ Invidious stream ${instance}: ${e.message?.slice(0, 40)}`);
+    }
+  }
+  return null;
+}
+
+// ── 4. Telegram'a video URL gönder (Telegram'ın kendi sunucusu indirir) ─────
+async function sendVideoByUrl(channelId, videoUrl, caption, extra = {}) {
+  try {
+    console.log(`📤 Telegram'a URL gönderiliyor: ${videoUrl.slice(0, 70)}`);
+    await bot.sendVideo(channelId, videoUrl, {
+      caption,
+      supports_streaming: true,
+      ...extra,
+    });
+    console.log('✅ Video URL ile gönderildi');
+    return true;
+  } catch (e) {
+    console.log(`⚠️ URL ile gönderme başarısız: ${e.message?.slice(0, 60)}`);
+    return false;
+  }
+}
+
+// ── 5. YouTube video gönder: URL önce, indirme son çare ────────────────────
+async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
+  const videoId =
+    videoUrl.match(/[?&]v=([^&]+)/)?.[1] ||
+    videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
+    videoUrl.match(/shorts\/([^?/]+)/)?.[1];
+
+  if (!videoId) return false;
+  console.log(`🎬 YouTube akıllı gönderme: ${videoId}`);
+
+  // 1. cobalt.tools → direkt URL → Telegram
+  const cobaltUrl = await getCobaltDirectUrl(videoUrl);
+  if (cobaltUrl) {
+    const ok = await sendVideoByUrl(channelId, cobaltUrl, caption);
+    if (ok) return true;
+  }
+
+  // 2. yt-dlp -g → stream URL → Telegram
+  const streamUrl = await getYtdlpStreamUrl(videoUrl);
+  if (streamUrl) {
+    const ok = await sendVideoByUrl(channelId, streamUrl, caption);
+    if (ok) return true;
+  }
+
+  // 3. Invidious stream URL → Telegram
+  const invUrl = await getInvidiousStreamUrl(videoId);
+  if (invUrl) {
+    const ok = await sendVideoByUrl(channelId, invUrl, caption);
+    if (ok) return true;
+  }
+
+  // 4. Son çare: eski yöntem (Railway indirir)
+  console.log('🔄 Son çare: dosya indirme...');
+  const filePath = await downloadYoutubeVideo(videoUrl);
+  if (filePath) {
+    try {
+      await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
+      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+      return true;
+    } catch (e) {
+      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  return false;
+}
+
+// ── 6. Makale/web URL'sinden video gönder ──────────────────────────────────
+async function sendArticleVideoSmart(channelId, articleUrl, caption) {
+  // 1. yt-dlp -g → stream URL → Telegram (YouTube değil, haber sitesi için)
+  console.log(`⬇️ yt-dlp -g: ${articleUrl.slice(0, 70)}`);
+  const streamUrl = await getYtdlpStreamUrl(articleUrl);
+  if (streamUrl) {
+    const ok = await sendVideoByUrl(channelId, streamUrl, caption);
+    if (ok) return true;
+    // URL çalışmadıysa yine de streamUrl bilgisi var, indirmeyi dene
+  }
+
+  // 2. HTML'den direkt video URL bul → URL'yi Telegram'a gönder
+  const articleHtml = await fetchArticleHtmlRaw(articleUrl);
+  if (articleHtml) {
+    const directVid = extractWebVideoEnhanced(articleHtml);
+    if (directVid) {
+      console.log(`🎬 HTML video URL: ${directVid.slice(0, 60)}`);
+      if (/youtube\.com|youtu\.be/i.test(directVid)) {
+        const ok = await sendYouTubeVideoSmart(channelId, directVid, caption);
+        if (ok) return true;
+      } else if (/\.m3u8/i.test(directVid)) {
+        // m3u8 — Railway ffmpeg ile indir (küçük çünkü canlı yayın segmenti)
+        const ok = await sendWebVideo(channelId, directVid, caption, null);
+        if (ok) return true;
+      } else {
+        // Direkt mp4 URL → Telegram indirir
+        const ok = await sendVideoByUrl(channelId, directVid, caption);
+        if (ok) return true;
+      }
+    }
+    // HTML'deki YouTube iframe ID'leri
+    const ytIds = extractYouTubeIdsFromHtml(articleHtml);
+    for (const ytId of ytIds.slice(0, 2)) {
+      const ok = await sendYouTubeVideoSmart(channelId, `https://www.youtube.com/watch?v=${ytId}`, caption);
+      if (ok) return true;
+    }
+  }
+
+  // 3. yt-dlp tam indirme (son çare)
+  console.log(`⬇️ yt-dlp tam indirme: ${articleUrl.slice(0, 60)}`);
+  const gPath = await downloadGenericWithYtdlp(articleUrl);
+  if (gPath) {
+    try {
+      await bot.sendVideo(channelId, { source: gPath }, { caption, supports_streaming: true });
+      try { fs.rmSync(path.dirname(gPath), { recursive: true, force: true }); } catch {}
+      return true;
+    } catch {}
+    try { fs.rmSync(path.dirname(gPath), { recursive: true, force: true }); } catch {}
+  }
+
+  return false;
 }
 
 async function downloadFromInvidious(videoId) {
@@ -1611,25 +1806,25 @@ function buildItemMeta(item, feed) {
 // ─── Şimdi Yayınla: Zorla Yayın (publishedUrls/duraklat/saat kısıtı YOK) ────
 
 
+
 async function publishNowInstant() {
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
-  // TV kanalları öne al (direkt yt-dlp destekli)
   feedPool = [
     ...feedPool.filter(f => f.type !== 'youtube'),
     ...feedPool.filter(f => f.type === 'youtube'),
   ];
-  console.log(`⚡ [Şimdi Yayınla] ${feedPool.length} feed, yt-dlp öncelikli...`);
+  console.log(`⚡ [Şimdi Yayınla] ${feedPool.length} feed...`);
 
-  for (const feed of feedPool.slice(0, 8)) {
+  for (const feed of feedPool.slice(0, 10)) {
     let items;
     try { items = await fetchFeed(feed); } catch { continue; }
     if (!items || items.length === 0) continue;
 
     const candidates = items
       .filter(a => (a.link || a.guid) && (a.title || '').length >= 10)
-      .slice(0, 2);
+      .slice(0, 3);
 
     for (const item of candidates) {
       const url = item.link || item.guid;
@@ -1646,109 +1841,46 @@ async function publishNowInstant() {
       let sentType = 'none';
 
       try {
-        // ═══ YouTube feed — cobalt ile indir ════════════════════════════
+        // ═══ YouTube feed ════════════════════════════════════════════════
         if (feed.type === 'youtube') {
-          console.log(`⚡ [ŞY] YouTube feed: ${url.slice(0, 60)}`);
-          const ytPath = await downloadYoutubeVideo(url);
-          if (ytPath) {
-            try {
-              await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-              sentType = 'video'; mediaStats.video++;
-              console.log(`⚡▶️ [ŞY] YouTube video: ${title.slice(0, 50)}`);
-            } catch (e) { console.error(`❌ YT send: ${e.message}`); }
-            try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-          }
-          if (sentType === 'video') {
+          console.log(`⚡ [ŞY] YouTube: ${url.slice(0, 60)}`);
+          const ok = await sendYouTubeVideoSmart(CHANNEL_ID, url, caption);
+          if (ok) {
+            sentType = 'video'; mediaStats.video++;
             publishedUrls.add(url); persistPublishedUrls();
             await notifyFilterUsers(title, rawDesc, url);
-            return '✅ YouTube videosu yayınlandı!';
+            console.log(`✅ [ŞY] YouTube video: ${title.slice(0, 50)}`);
+            return '✅ Video yayınlandı! 🎬';
           }
           continue;
         }
 
-        // ═══ Adım 1: Google News URL → gerçek makale URL'si ══════════════
+        // ═══ Google News → gerçek URL ════════════════════════════════════
         let realUrl = url;
         if (url.includes('news.google.com')) {
-          console.log(`🔗 [ŞY] Google News çözülüyor...`);
+          console.log(`🔗 [ŞY] URL çözülüyor...`);
           realUrl = (await resolveGoogleNewsUrl(url)) || url;
-          console.log(`🔗 [ŞY] Gerçek URL: ${realUrl.slice(0, 80)}`);
+          console.log(`🔗 [ŞY] → ${realUrl.slice(0, 80)}`);
         }
 
-        // ═══ Adım 2: yt-dlp makale URL'si — Türk TV siteleri destekleniyor ═
-        // halktv.com.tr, tele1.com.tr, krttv.com.tr, ntv.com.tr vb. direkt çalışır
-        if (sentType === 'none' && !realUrl.includes('news.google.com')) {
-          console.log(`⬇️ [ŞY] yt-dlp: ${realUrl.slice(0, 70)}`);
-          const gPath = await downloadGenericWithYtdlp(realUrl);
-          if (gPath) {
-            try {
-              await bot.sendVideo(CHANNEL_ID, { source: gPath }, { caption, supports_streaming: true });
-              sentType = 'video'; mediaStats.video++;
-              console.log(`⚡🎬 [ŞY] yt-dlp başarılı: ${realUrl.slice(0, 50)}`);
-            } catch (e) { console.error(`❌ yt-dlp send: ${e.message}`); }
-            try { fs.rmSync(path.dirname(gPath), { recursive: true, force: true }); } catch {}
-          }
+        // ═══ Haber sitesinden video gönder (yt-dlp + HTML + YouTube embed) ═
+        if (!realUrl.includes('news.google.com')) {
+          console.log(`🎬 [ŞY] Video aranıyor: ${realUrl.slice(0, 70)}`);
+          const ok = await sendArticleVideoSmart(CHANNEL_ID, realUrl, caption);
+          if (ok) { sentType = 'video'; mediaStats.video++; }
         }
 
-        // ═══ Adım 3: HTML'den direkt video URL (og:video, <video>, JW Player) ═
-        if (sentType === 'none') {
-          console.log(`📄 [ŞY] HTML video aranıyor...`);
-          const articleHtml = await fetchArticleHtmlRaw(realUrl);
-          if (articleHtml) {
-            const directVid = extractWebVideoEnhanced(articleHtml);
-            if (directVid) {
-              console.log(`🎬 [ŞY] HTML video: ${directVid.slice(0, 60)}`);
-              // YouTube embed ise cobalt ile indir
-              if (/youtube\.com|youtu\.be/i.test(directVid)) {
-                const ytPath = await downloadYoutubeVideo(directVid);
-                if (ytPath) {
-                  try {
-                    await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                    sentType = 'video'; mediaStats.video++;
-                  } catch {}
-                  try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-                }
-              } else {
-                const ok = await sendWebVideo(CHANNEL_ID, directVid, caption, null);
-                if (ok) { sentType = 'video'; mediaStats.video++; }
-              }
-            }
-            // HTML'den YouTube iframe ID'leri
-            if (sentType === 'none') {
-              const ytIds = extractYouTubeIdsFromHtml(articleHtml);
-              for (const ytId of ytIds.slice(0, 2)) {
-                const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
-                if (ytPath) {
-                  try {
-                    await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                    sentType = 'video'; mediaStats.video++;
-                    console.log(`⚡▶️ [ŞY] iframe YT: ${ytId}`);
-                  } catch {}
-                  try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-                  if (sentType === 'video') break;
-                }
-              }
-            }
-          }
-        }
-
-        // ═══ Adım 4: Kaynak ismiyle YouTube araması ══════════════════════
-        if (sentType === 'none') {
-          console.log(`🔍 [ŞY] YouTube araması: "${sourceName} + başlık"`);
+        // ═══ URL çözülemediyse kaynak adıyla YouTube araması ═════════════
+        if (sentType === 'none' && sourceName) {
+          console.log(`🔍 [ŞY] YouTube araması: "${sourceName}"`);
           const ytId = await searchYouTubeByTitle(title, sourceName);
           if (ytId) {
-            const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
-            if (ytPath) {
-              try {
-                await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                sentType = 'video'; mediaStats.video++;
-                console.log(`⚡▶️ [ŞY] YouTube arama: ${ytId}`);
-              } catch {}
-              try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-            }
+            const ok = await sendYouTubeVideoSmart(CHANNEL_ID, `https://www.youtube.com/watch?v=${ytId}`, caption);
+            if (ok) { sentType = 'video'; mediaStats.video++; }
           }
         }
 
-        // ═══ Adım 5: OG resim / RSS media ═══════════════════════════════
+        // ═══ Resim fallback ══════════════════════════════════════════════
         if (sentType === 'none') {
           const ogMeta = await fetchOgMeta(realUrl);
           const rssMedia = extractMedia(item);
@@ -1771,7 +1903,7 @@ async function publishNowInstant() {
           }
         }
 
-        // ═══ Adım 6: Son çare metin ══════════════════════════════════════
+        // ═══ Son çare metin ══════════════════════════════════════════════
         if (sentType === 'none') {
           try { await bot.sendMessage(CHANNEL_ID, caption); sentType = 'text'; mediaStats.text++; } catch {}
         }
@@ -1779,13 +1911,13 @@ async function publishNowInstant() {
         if (sentType !== 'none') {
           publishedUrls.add(url); persistPublishedUrls();
           await notifyFilterUsers(title, rawDesc, url);
-          console.log(`✅ [Şimdi Yayınla] [${sentType}] ${title.slice(0, 60)}`);
+          console.log(`✅ [ŞY] [${sentType}] ${title.slice(0, 60)}`);
           return sentType === 'video'
             ? '✅ Video yayınlandı! 🎬'
-            : sentType === 'image' ? '📸 Haber yayınlandı (resim).' : '📝 Haber yayınlandı (metin).';
+            : sentType === 'image' ? '📸 Resimli haber yayınlandı.' : '📝 Metin haber yayınlandı.';
         }
 
-        console.log(`⏭ [ŞY] Bu haber geçildi, sonraki deneniyor...`);
+        console.log(`⏭ [ŞY] Sonraki deneniyor...`);
       } catch (err) {
         console.error(`❌ [ŞY] Hata: ${err.message}`);
       }
@@ -2332,6 +2464,7 @@ async function searchYouTubeByTitle(title, source) {
 
 
 
+
 async function checkBreakingNews() {
   if (settings.paused) return;
 
@@ -2346,8 +2479,8 @@ async function checkBreakingNews() {
     try {
       const items = await fetchFeed(feed);
       const newItems = items.filter(item => {
-        const url = item.link || item.guid;
-        return url && !publishedUrls.has(url) && isValidNewsItem(item, feed) && isBreakingNews(item.title || '');
+        const u = item.link || item.guid;
+        return u && !publishedUrls.has(u) && isValidNewsItem(item, feed) && isBreakingNews(item.title || '');
       });
 
       for (const item of newItems.slice(0, 1)) {
@@ -2373,80 +2506,27 @@ async function checkBreakingNews() {
         let sentType = 'text';
 
         try {
-          // Adım 1: Google News URL çöz
           let realUrl = url;
           if (url.includes('news.google.com')) {
             realUrl = (await resolveGoogleNewsUrl(url)) || url;
           }
 
-          // Adım 2: yt-dlp makale URL'si (Türk TV siteleri doğrudan destekleniyor)
+          // Haber sitesinden video
           if (!realUrl.includes('news.google.com')) {
-            console.log(`⬇️ [SD] yt-dlp: ${realUrl.slice(0, 60)}`);
-            const gPath = await downloadGenericWithYtdlp(realUrl);
-            if (gPath) {
-              try {
-                await bot.sendVideo(CHANNEL_ID, { source: gPath }, { caption, supports_streaming: true });
-                sentType = 'video'; mediaStats.video++;
-                console.log(`🚨🎬 SON DAKİKA yt-dlp`);
-              } catch (e) { console.error(`❌ SD yt-dlp: ${e.message}`); sentType = 'text'; }
-              try { fs.rmSync(path.dirname(gPath), { recursive: true, force: true }); } catch {}
-            }
+            const ok = await sendArticleVideoSmart(CHANNEL_ID, realUrl, caption);
+            if (ok) { sentType = 'video'; mediaStats.video++; }
           }
 
-          // Adım 3: HTML'den direkt video
-          if (sentType !== 'video') {
-            const articleHtml = await fetchArticleHtmlRaw(realUrl);
-            if (articleHtml) {
-              const directVid = extractWebVideoEnhanced(articleHtml);
-              if (directVid) {
-                if (/youtube\.com|youtu\.be/i.test(directVid)) {
-                  const ytPath = await downloadYoutubeVideo(directVid);
-                  if (ytPath) {
-                    try {
-                      await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                      sentType = 'video'; mediaStats.video++;
-                    } catch {}
-                    try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-                  }
-                } else {
-                  const ok = await sendWebVideo(CHANNEL_ID, directVid, caption, null);
-                  if (ok) { sentType = 'video'; mediaStats.video++; }
-                }
-              }
-              // HTML iframe YT
-              if (sentType !== 'video') {
-                const ytIds = extractYouTubeIdsFromHtml(articleHtml);
-                for (const ytId of ytIds.slice(0, 2)) {
-                  const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
-                  if (ytPath) {
-                    try {
-                      await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                      sentType = 'video'; mediaStats.video++;
-                    } catch {}
-                    try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-                    if (sentType === 'video') break;
-                  }
-                }
-              }
-            }
-          }
-
-          // Adım 4: Kaynak YouTube araması
-          if (sentType !== 'video') {
+          // YouTube araması
+          if (sentType !== 'video' && sourceName) {
             const ytId = await searchYouTubeByTitle(title, sourceName);
             if (ytId) {
-              const ytPath = await downloadYoutubeVideo(`https://www.youtube.com/watch?v=${ytId}`);
-              if (ytPath) {
-                try {
-                  await bot.sendVideo(CHANNEL_ID, { source: ytPath }, { caption, supports_streaming: true });
-                  sentType = 'video'; mediaStats.video++;
-                } catch {}
-                try { fs.rmSync(path.dirname(ytPath), { recursive: true, force: true }); } catch {}
-              }
+              const ok = await sendYouTubeVideoSmart(CHANNEL_ID, `https://www.youtube.com/watch?v=${ytId}`, caption);
+              if (ok) { sentType = 'video'; mediaStats.video++; }
             }
           }
 
-          // Adım 5: Resim
+          // Resim
           if (sentType !== 'video') {
             const ogMeta = await fetchOgMeta(realUrl);
             const rssMedia = extractMedia(item);
