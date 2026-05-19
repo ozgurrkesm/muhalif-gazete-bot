@@ -420,6 +420,7 @@ const CATEGORY_LABELS = {
 };
 
 const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
+const BREAKING_INTERVAL_MS = 2 * 60 * 1000; // 2 dakika
 
   // ─── Son Dakika Hızlı Tarama ─────────────────────────────────────────────────
 
@@ -598,6 +599,7 @@ setInterval(persistPublishedUrls, 30 * 1000);
 // Son dakika için ayrı in-memory cache — disk'e yazılmaz, restart'ta sıfırlanır
 // Böylece publishedUrls'teki eski kayıtlar son dakikayı engellemez
 const breakingPublishedUrls = new Set();
+let breakingNewsInterval = null;
 // Her 2 saatte bir temizle (çok büyümemesi için)
 setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
 
@@ -2567,7 +2569,28 @@ let publishingInProgress = false;
   return null;
 }
 
-// ─── Google News Redirect Çözücü ─────────────────────────────────────────────
+
+  // ─── Google News URL Base64 Decoder ──────────────────────────────────────────
+  function decodeGoogleNewsUrl(googleUrl) {
+    try {
+      // Google News RSS URL'lerinin encoded kısmını çöz
+      const match = googleUrl.match(/articles\/(CBM[^?&\s]+)/);
+      if (!match) return null;
+      const encoded = match[1];
+      // Base64url decode
+      const buf = Buffer.from(encoded, 'base64url');
+      const decoded = buf.toString('utf-8');
+      // İçinden http/https URL bul
+      const urlMatch = decoded.match(/(https?:\/\/[^\s\x00-\x1f\x7f-\xff]+)/);
+      if (!urlMatch) return null;
+      const url = urlMatch[1].replace(/[\x00-\x1f\x7f-\xff]+.*$/, '').trim();
+      return url.startsWith('http') ? url : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // ─── Google News Redirect Çözücü ─────────────────────────────────────────────
 async function resolveGoogleNewsUrl(googleUrl, depth) {
   depth = depth || 0;
   // 1. Önce Base64 decoder dene (HTTP gerektirmez, anlık)
