@@ -1178,7 +1178,66 @@ async function fetchSubjectImage(title) {
   return null;
 }
 
-// ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
+// ─── Makale sayfasından görsel topla (fetch tabanlı) ─────────────────────────
+  async function scrapePageImages(url) {
+    if (!url || url.includes('news.google.com')) return [];
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      let res = null;
+      try {
+        res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0',
+            'Accept': 'text/html,application/xhtml+xml',
+          },
+        });
+      } finally { clearTimeout(timer); }
+      if (!res || !res.ok) return [];
+      const html = await res.text().catch(() => '');
+      if (!html) return [];
+      const results = [];
+      const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','button','arrow','spinner','1x1','tracking','favicon','placeholder','blank','default','social'];
+      // og:image / twitter:image
+      const ogMatch = html.match(/<meta[^>]+(?:property=["']og:image["']|name=["']twitter:image[^"']*["'])[^>]+content=["']([^"']{10,})["']/i)
+                   || html.match(/<meta[^>]+content=["']([^"']{10,})["'][^>]+(?:property=["']og:image["']|name=["']twitter:image)/i);
+      if (ogMatch?.[1]?.startsWith('http')) results.push(ogMatch[1]);
+      // <img> tag'lerinden büyük görseller
+      const imgRe = /<img[^>]+(?:src|data-src|data-lazy-src|data-original)=["']([^"']{15,})["'][^>]*>/gi;
+      let m;
+      while ((m = imgRe.exec(html)) !== null && results.length < 8) {
+        const src = m[1];
+        if (!src.startsWith('http')) continue;
+        if (!/.(jpe?g|png|webp)(?|$)/i.test(src) && !//image|/photo|/img|/foto|/resim/i.test(src)) continue;
+        if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
+        const dims = src.match(/[_-](d+)x(d+)[_.-]/);
+        if (dims && (+dims[1] < 200 || +dims[2] < 150)) continue;
+        if (!results.includes(src)) results.push(src);
+      }
+      // srcset'ten en büyük URL
+      const srcsetRe = /srcset=["']([^"']+)["']/gi;
+      while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
+        const parts = m[1].split(',').map(p => p.trim().split(/s+/));
+        let bestUrl = null, bestW = 0;
+        for (const [u, w] of parts) {
+          if (!u?.startsWith('http')) continue;
+          if (SKIP.some(s => u.toLowerCase().includes(s))) continue;
+          const wVal = w ? parseInt(w) : 0;
+          if (wVal > bestW) { bestW = wVal; bestUrl = u; }
+          else if (!bestUrl) bestUrl = u;
+        }
+        if (bestUrl && !results.includes(bestUrl)) results.push(bestUrl);
+      }
+      console.log(`📸 scrapePageImages: ${results.length} görsel — ${url.slice(0,50)}`);
+      return results.slice(0, 5);
+    } catch (e) {
+      console.log(`⚠️ scrapePageImages hata: ${e.message?.slice(0,50)}`);
+      return [];
+    }
+  }
+
+  // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
 function cleanTitle(title) {
   let t = (title || '').trim();
@@ -2225,69 +2284,56 @@ async function publishNowInstant() {
           if (ok) { sentType = 'video'; mediaStats.video++; }
         }
 
-        // ═══ 4. Tüm görsel adaylarını topla (OG + RSS + sayfa scrape) ═
-          const imgCandidates = [];
-          if (ogImg)  imgCandidates.push(ogImg);
-          if (ogImg2) imgCandidates.push(ogImg2);
-
-          // OG görsel bulunamadıysa sayfayı tara
-          if (imgCandidates.length === 0 && !realUrl.includes('news.google.com')) {
-            tgLog(`🔍 OG görsel yok, sayfa taranıyor: ${realUrl.slice(0,60)}`);
-            const pageImgs = await scrapePageImages(realUrl).catch(() => []);
-            pageImgs.forEach(u => imgCandidates.push(u));
-            if (imgCandidates.length > 0) tgLog(`🖼 Sayfadan ${imgCandidates.length} görsel bulundu`);
-          }
-
-          // ═══ 5. Görselleri sırayla dene — ilk çalışan gönderilir ════════
-          if (sentType === 'none' && imgCandidates.length > 0) {
-            // İki görsel varsa media group ile gönder
-            if (imgCandidates.length >= 2) {
-              try {
-                await bot.sendMediaGroup(CHANNEL_ID, [
-                  { type: 'photo', media: imgCandidates[0], caption },
-                  { type: 'photo', media: imgCandidates[1] },
-                ]);
-                sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-                tgLog(`📸📸 2 görsel (media group) gönderildi`);
-              } catch {
-                // Media group başarısız → tek tek dene
-              }
+        // ═══ 4. Resim gönder ════════════════════════════════════════════
+        if (sentType === 'none' && ogImg) {
+          tgLog(`🖼 Görsel gönderiliyor: ${ogImg.slice(0, 60)}`);
+          if (ogImg2) {
+            try {
+              await bot.sendMediaGroup(CHANNEL_ID, [
+                { type: 'photo', media: ogImg, caption },
+                { type: 'photo', media: ogImg2 },
+              ]);
+              sentType = 'image'; mediaStats.image++;
+            } catch (e1) {
+              tgLog(`⚠️ Media group hata: ${e1.message?.slice(0,80)}, tek foto deneniyor...`);
+              try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
+              catch (e2) { tgLog(`❌ Foto gönderilemedi: ${e2.message?.slice(0,100)}`); }
             }
-            if (sentType === 'none') {
-              for (const imgUrl of imgCandidates.slice(0, 5)) {
+          } else {
+            try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
+            catch (e) { tgLog(`❌ Foto gönderilemedi: ${e.message?.slice(0,100)}`); }
+          }
+        }
+
+        // ═══ 5. OG görsel yok → sayfayı tara → DuckDuckGo (metin ASLA) ══
+          if (sentType === 'none') {
+            if (!realUrl.includes('news.google.com')) {
+              tgLog(`🔍 Sayfa görseli aranıyor: ${realUrl.slice(0,50)}`);
+              const pageImgs = await scrapePageImages(realUrl).catch(() => []);
+              for (const imgUrl of pageImgs) {
                 try {
                   await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption });
                   sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-                  tgLog(`🖼 Görsel gönderildi: ${imgUrl.slice(0,60)}`);
+                  tgLog(`🖼 Sayfa görseli gönderildi`);
                   break;
-                } catch (e) {
-                  tgLog(`⚠️ Görsel reddedildi (Telegram): ${imgUrl.slice(0,50)} — ${e.message?.slice(0,40)}`);
-                }
+                } catch { /* bu görsel çalışmadı */ }
               }
             }
-          }
-
-          // ═══ 6. Sayfa görseli de yoksa DuckDuckGo (son çare) ════════════
-          if (sentType === 'none') {
-            tgLog(`🔎 Sayfa görseli yok, DuckDuckGo: ${title.slice(0,40)}`);
-            const ddgImg = await fetchDuckDuckGoImage(title).catch(() => null);
-            if (ddgImg) {
-              try {
-                await bot.sendPhoto(CHANNEL_ID, ddgImg, { caption });
-                sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
-                tgLog(`🖼 DuckDuckGo görseli gönderildi`);
-              } catch { tgLog(`❌ DuckDuckGo görseli reddedildi`); }
+            if (sentType === 'none') {
+              tgLog(`🔎 DDG: ${title.slice(0,40)}`);
+              const ddgImg = await fetchDuckDuckGoImage(title).catch(() => null);
+              if (ddgImg) {
+                try {
+                  await bot.sendPhoto(CHANNEL_ID, ddgImg, { caption });
+                  sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
+                  tgLog(`🖼 DDG görseli gönderildi`);
+                } catch { tgLog(`❌ DDG görseli reddedildi`); }
+              }
             }
+            if (sentType === 'none') tgLog(`⏭ Görsel bulunamadı — sıradaki habere geçiliyor`);
           }
 
-          // ═══ 7. Hiçbir görsel çalışmadı — bu haberi atla ════════════════
-          if (sentType === 'none') {
-            tgLog(`⏭ Görsel bulunamadı, sıradaki habere geçiliyor.`);
-            publishedUrls.add(url);
-            persistPublishedUrls();
-          }
-
-          if (sentType !== 'none') {
+        if (sentType !== 'none') {
           publishedUrls.add(url); persistPublishedUrls();
           await notifyFilterUsers(title, rawDesc, url);
           console.log(`✅ [ŞY] [${sentType}] ${title.slice(0, 60)}`);
@@ -2474,7 +2520,7 @@ let publishingInProgress = false;
       console.log(`⏭ [${feed.source}] Haber bulunamadı, atlanıyor.`);
       return;
     }
-    console.log(`📝 [${feed.source}] Medya yok, sayfa görseli aranıyor....`);
+    console.log(`📝 [${feed.source}] Medya yok — metin olarak gönderiliyor.`);
     chosenItem = textFallbackItem;
     chosenCandidateUrl = textFallbackItem.link || textFallbackItem.guid;
   }
@@ -2567,35 +2613,28 @@ let publishingInProgress = false;
         sentType = 'image';
       }
     } else {
-        // Medya yok — sayfadan görsel çekmeyi dene, metin asla gönderme
-        const fallbackUrl2 = chosenItem.link || chosenItem.guid;
-        const pageImgs2 = await scrapePageImages(fallbackUrl2).catch(() => []);
-        let fbSent = false;
-        for (const imgUrl of pageImgs2.slice(0, 5)) {
+        // Medya yok — sayfadan görsel ara (metin ASLA gönderilmez)
+        const _fbUrl = chosenItem.link || chosenItem.guid;
+        const _pageImgs = await scrapePageImages(_fbUrl).catch(() => []);
+        let _fbSent = false;
+        for (const imgUrl of _pageImgs) {
           try {
             sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, sendOpts({ caption }));
-            sentType = 'image';
-            mediaStats.image = (mediaStats.image || 0) + 1;
-            console.log(`🖼 Sayfa görseli gönderildi`);
-            fbSent = true;
-            break;
-          } catch { /* bu görsel çalışmadı */ }
+            sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
+            _fbSent = true; break;
+          } catch { /* sıradaki */ }
         }
-        if (!fbSent) {
-          const ddgImg2 = await fetchDuckDuckGoImage(title).catch(() => null);
-          if (ddgImg2) {
+        if (!_fbSent) {
+          const _ddg = await fetchDuckDuckGoImage(title).catch(() => null);
+          if (_ddg) {
             try {
-              sentMsg = await bot.sendPhoto(CHANNEL_ID, ddgImg2, sendOpts({ caption }));
-              sentType = 'image';
-              mediaStats.image = (mediaStats.image || 0) + 1;
-              fbSent = true;
-            } catch { /* DDG da çalışmadı */ }
+              sentMsg = await bot.sendPhoto(CHANNEL_ID, _ddg, sendOpts({ caption }));
+              sentType = 'image'; mediaStats.image = (mediaStats.image || 0) + 1;
+              _fbSent = true;
+            } catch { /* DDG de çalışmadı */ }
           }
         }
-        if (!fbSent) {
-          console.log(`⏭ Görsel bulunamadı (tüm yöntemler) — haber atlanıyor`);
-          sentType = 'skip';
-        }
+        if (!_fbSent) { sentType = 'skip'; console.log('⏭ Görsel bulunamadı, atlandı'); }
       }
     }
   } catch {}
@@ -2642,67 +2681,7 @@ async function resolveGoogleNewsUrl(googleUrl, depth) {
   });
 }
 
-  // ─── Makale sayfasından tüm görselleri topla (fetch tabanlı, OG yoksa fallback) ──
-  async function scrapePageImages(url) {
-    if (!url || url.includes('news.google.com')) return [];
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 8000);
-      let res = null;
-      try {
-        res = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml',
-          },
-        });
-      } finally { clearTimeout(timer); }
-      if (!res || !res.ok) return [];
-      const html = await res.text().catch(() => '');
-      if (!html) return [];
-      const results = [];
-      const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','social','button','arrow','loading','spinner','1x1','tracking','favicon','placeholder','blank','default'];
-      // 1. og:image / twitter:image
-      const ogMatch = html.match(/<meta[^>]+(?:property=["']og:image["']|name=["']twitter:image(?::src)?["'])[^>]+content=["']([^"']{10,})["']/i)
-                   || html.match(/<meta[^>]+content=["']([^"']{10,})["'][^>]+(?:property=["']og:image["']|name=["']twitter:image)/i);
-      if (ogMatch?.[1]?.startsWith('http')) results.push(ogMatch[1]);
-      // 2. <img> tag'lerinden büyük görseller
-      const imgRe = /<img[^>]+(?:src|data-src|data-lazy-src|data-original)=["']([^"']{15,})["'][^>]*>/gi;
-      let m;
-      while ((m = imgRe.exec(html)) !== null && results.length < 8) {
-        const src = m[1];
-        if (!src.startsWith('http')) continue;
-        if (!/.(jpe?g|png|webp)(?|$)/i.test(src) && !//image|/photo|/img|/foto|/resim/i.test(src)) continue;
-        if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
-        const dims = src.match(/[_-](d+)x(d+)[_.-]/);
-        if (dims && (+dims[1] < 200 || +dims[2] < 150)) continue;
-        if (!results.includes(src)) results.push(src);
-      }
-      // 3. srcset'ten en büyük URL
-      const srcsetRe = /srcset=["']([^"']+)["']/gi;
-      while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
-        const parts = m[1].split(',').map(p => p.trim().split(/s+/));
-        let bestUrl = null, bestW = 0;
-        for (const [u, w] of parts) {
-          if (!u?.startsWith('http')) continue;
-          if (SKIP.some(s => u.toLowerCase().includes(s))) continue;
-          const wVal = w ? parseInt(w) : 0;
-          if (wVal > bestW) { bestW = wVal; bestUrl = u; }
-          else if (!bestUrl) bestUrl = u;
-        }
-        if (bestUrl && !results.includes(bestUrl)) results.push(bestUrl);
-      }
-      console.log(`📸 scrapePageImages: ${url.slice(0,60)} → ${results.length} görsel`);
-      return results.slice(0, 6);
-    } catch (e) {
-      console.log(`⚠️ scrapePageImages hata: ${e.message?.slice(0,60)}`);
-      return [];
-    }
-  }
-  
-
-  // ─── Makale HTML'inden YouTube Video ID'lerini Çıkar ─────────────────────────
+// ─── Makale HTML'inden YouTube Video ID'lerini Çıkar ─────────────────────────
 function extractYouTubeIdsFromHtml(html) {
   if (!html) return [];
   const ids = new Set();
