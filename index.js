@@ -1460,37 +1460,42 @@ async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
 
   if (!videoId) { tgLog('❌ YouTube video ID çıkarılamadı'); return false; }
   console.log(`🎬 YouTube gönderme: ${videoId}`);
-  tgLog(`🎬 YouTube video: ${videoId}`);
+  tgLog(`🎬 YouTube video deneniyor: ${videoId}`);
 
-  // 1. Thumbnail — her zaman çalışır, Railway IP engeline takılmaz
-  const safeThumbCaption = caption.replace(/https?:\/\/\S+/g, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 1024);
-  for (const tq of ['maxresdefault', 'hqdefault', 'mqdefault', 'sddefault']) {
-    try {
-      await bot.sendPhoto(channelId, `https://i.ytimg.com/vi/${videoId}/${tq}.jpg`, { caption: safeThumbCaption });
-      tgLog(`✅ YouTube thumbnail (${tq}) gönderildi`);
-      return true;
-    } catch (e) {
-      tgLog(`⚠️ Thumbnail ${tq} hata: ${e.message?.slice(0, 60)}`);
-    }
-  }
-
-  // 2. cobalt.tools → direkt MP4 URL → Telegram (thumbnail başarısız olursa)
-  tgLog('2️⃣ cobalt.tools deneniyor...');
+  // 1. cobalt.tools → direkt MP4 URL
+  tgLog('1️⃣ cobalt.tools deneniyor...');
   const cobaltUrl = await getCobaltDirectUrl(videoUrl);
   if (cobaltUrl) {
     const ok = await sendVideoByUrl(channelId, cobaltUrl, caption);
     if (ok) { tgLog('✅ cobalt ile video gönderildi!'); return true; }
-  }
+    tgLog('⚠️ cobalt URL Telegram tarafından reddedildi');
+  } else { tgLog('⚠️ cobalt URL alınamadı'); }
 
-  // 3. Invidious stream URL
-  tgLog('3️⃣ Invidious stream deneniyor...');
+  // 2. Invidious stream URL
+  tgLog('2️⃣ Invidious stream deneniyor...');
   const invUrl = await getInvidiousStreamUrl(videoId);
   if (invUrl) {
     const ok = await sendVideoByUrl(channelId, invUrl, caption);
     if (ok) { tgLog('✅ Invidious ile video gönderildi!'); return true; }
-  }
+    tgLog('⚠️ Invidious URL çalışmadı');
+  } else { tgLog('⚠️ Invidious URL alınamadı'); }
 
-  tgLog('❌ YouTube: tüm yöntemler başarısız');
+  // 3. yt-dlp tam indirme
+  tgLog('3️⃣ yt-dlp indirme deneniyor...');
+  const filePath = await downloadYoutubeVideo(videoUrl);
+  if (filePath) {
+    try {
+      await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
+      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+      tgLog('✅ yt-dlp ile video yüklendi!');
+      return true;
+    } catch (e) {
+      tgLog(`⚠️ Video yükleme başarısız: ${e.message?.slice(0, 80)}`);
+      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+    }
+  } else { tgLog('⚠️ yt-dlp indirme başarısız'); }
+
+  tgLog('❌ YouTube: video gönderilemedi, atlanıyor');
   return false;
 }
 
@@ -2137,15 +2142,9 @@ async function publishNextNews() {
   );
 
   if (validItems.length === 0) {
-      // publishedUrls'deki tüm haberler zaten yayınlanmış — en yeni haberi zorla dene
-      const freshItems = items.filter(a => (a.link || a.guid) && isValidNewsItem(a, feed));
-      if (freshItems.length === 0) { console.log(`ℹ️ ${feed.source} uygun içerik yok.`); return; }
-      console.log(`🔄 ${feed.source}: tüm haberler yayınlandı, en yeni haber yeniden deneniyor...`);
-      // En yeni haberin URL'ini publishedUrls'den geçici olarak çıkar
-      const freshUrl = freshItems[0].link || freshItems[0].guid;
-      publishedUrls.delete(freshUrl);
-      validItems.push(...freshItems.slice(0, 1));
-    }
+    console.log(`ℹ️ ${feed.source}: yeni haber yok, atlanıyor.`);
+    return;
+  }
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
   if (feed.type === 'youtube') {
@@ -3344,6 +3343,18 @@ bot.onText(/\/video/, async (msg) => {
   if (!sent) {
     await bot.sendMessage(msg.chat.id, '⚠️ Hiçbir kaynaktan video bulunamadı. YouTube bot koruması veya haberlerde video yok.');
   }
+});
+
+bot.onText(/\/dur/, (msg) => {
+  settings.paused = true;
+  saveSettings();
+  bot.sendMessage(msg.chat.id, '⏸ Bot durduruldu. Devam ettirmek için admin panelinden "▶️ Devam Et"e basın veya /baslat yazın.');
+});
+
+bot.onText(/\/baslat/, (msg) => {
+  settings.paused = false;
+  saveSettings();
+  bot.sendMessage(msg.chat.id, '▶️ Bot yeniden başlatıldı!');
 });
 
 bot.onText(/\/durum/, (msg) => {
