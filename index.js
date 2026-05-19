@@ -2120,6 +2120,7 @@ function buildItemMeta(item, feed) {
 
 
 async function publishNowInstant() {
+  if (publishingInProgress) console.log('ℹ️ publishNowInstant: önceki döngü aktif, paralel çalışıyor.');
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
@@ -2147,7 +2148,7 @@ async function publishNowInstant() {
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
         return true;
       })
-      .slice(0, 5);
+      .slice(0, 10);
 
     if (candidates.length === 0) { tgLog(`⏭ ${feed.label}: uygun içerik yok`); continue; }
     tgLog(`🔍 ${feed.label}: ${candidates.length} aday bulundu`);
@@ -2245,12 +2246,16 @@ async function publishNowInstant() {
           }
         }
 
-        // ═══ 5. Görsel de yok — sonraki habere geç ══════════════════════
+        // ═══ 5. Görsel de yok — metin olarak gönder ════════════════════
         if (sentType === 'none') {
-          tgLog(`⏭ Medya bulunamadı, sonraki aday deneniyor...`);
-          // Bu URL'yi geçici olarak işaretle (session süresince tekrar deneme)
-          publishedUrls.add(url);
-          persistPublishedUrls();
+          tgLog(`📝 Görsel bulunamadı — metin olarak gönderiliyor...`);
+          try {
+            await bot.sendMessage(CHANNEL_ID, caption, { disable_web_page_preview: false });
+            sentType = 'text';
+            mediaStats.text = (mediaStats.text || 0) + 1;
+          } catch (e) {
+            tgLog(`❌ Metin gönderilemedi: ${e.message?.slice(0,80)}`);
+          }
         }
 
         if (sentType !== 'none') {
@@ -2545,8 +2550,8 @@ let publishingInProgress = false;
 
   if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
 
-  mediaStats[sentType]++;
-  const total = mediaStats.image + mediaStats.video + mediaStats.text;
+  if (['image','video','text'].includes(sentType)) mediaStats[sentType]++;
+  const total = (mediaStats.image||0) + (mediaStats.video||0) + (mediaStats.text||0);
   console.log(`📊 Resim:%${Math.round(mediaStats.image/total*100)} Video:%${Math.round(mediaStats.video/total*100)} Metin:%${Math.round(mediaStats.text/total*100)}`);
   if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
   await notifyFilterUsers(title, rawDesc, url);
@@ -3451,6 +3456,7 @@ bot.on('callback_query', async (query) => {
       break;
 
     default: {
+      if (data.startsWith('reply_user_')) break; // 2. handler ele alır
       if (data.startsWith('cmd_info_')) {
         const idx = parseInt(data.replace('cmd_info_', ''), 10);
         const cmd = BOT_COMMANDS[idx];
@@ -4022,7 +4028,7 @@ bot.on('callback_query', async (query) => {
   if (!isAdmin(chatId)) return;
 
   const userId = data.replace('reply_user_', '');
-  await bot.answerCallbackQuery(query.id);
+  await bot.answerCallbackQuery(query.id).catch(() => {});
   await bot.sendMessage(
     query.message.chat.id,
     `✏️ Kullanıcıya (${userId}) yanıt yazın — bu mesajı alıntılayarak (reply) gönderin:`,
