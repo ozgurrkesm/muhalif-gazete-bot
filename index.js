@@ -1994,124 +1994,21 @@ async function sendYoutubeVideo(channelId, videoUrl, caption) {
 
 // Web sayfasından doğrudan .mp4 videoyu Telegram'a gönder
 async function sendWebVideo(channelId, videoUrl, caption, replyToId = null) {
-  const opts = (extra = {}) => {
-    const o = { caption, supports_streaming: true, ...extra };
-    if (replyToId) o.reply_parameters = { message_id: replyToId, allow_sending_without_reply: true };
-    return o;
-  };
-
-  // 1. Önce URL'yi doğrudan Telegram'a göndermeyi dene (hızlı yol)
-  try {
-    await bot.sendVideo(channelId, videoUrl, opts());
-    console.log('✅ Web video URL ile gönderildi');
-    return true;
-  } catch (err) {
-    console.log(`⚠️ URL ile gönderme başarısız (${err.message}), dosya indiriliyor...`);
-  }
-
-  // 2. Videoyu kendimiz indir, dosya olarak gönder
-  const tmpDir = path.join(os.tmpdir(), `webvid_${Date.now()}`);
-  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
-  const filePath = path.join(tmpDir, 'video.mp4');
-
-  // m3u8 / HLS stream — ffmpeg ile indir
-  if (videoUrl.includes('.m3u8') || videoUrl.includes('m3u8')) {
+    const opts = (extra = {}) => {
+      const o = { caption, supports_streaming: true, ...extra };
+      if (replyToId) o.reply_parameters = { message_id: replyToId, allow_sending_without_reply: true };
+      return o;
+    };
+    // Sadece URL ile Telegram'a gönder — indirme yok (Railway'de bloke oluyor)
     try {
-      console.log('📡 m3u8 stream, ffmpeg ile indiriliyor...');
-      await new Promise((resolve, reject) => {
-        const proc = spawn('ffmpeg', [
-          '-i', videoUrl,
-          '-c', 'copy',
-          '-movflags', '+faststart',
-          '-fs', String(MAX_VIDEO_SIZE_BYTES),
-          '-y', filePath,
-        ]);
-        proc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg kod ${code}`)));
-        proc.on('error', reject);
-        setTimeout(() => { proc.kill(); reject(new Error('ffmpeg timeout')); }, 120000);
-      });
-      const stat = fs.statSync(filePath);
-      const mb = Math.round(stat.size / 1024 / 1024);
-      console.log(`📤 m3u8 indirildi (${mb}MB), gönderiliyor...`);
-      await bot.sendVideo(channelId, { source: filePath }, opts());
-      console.log('✅ m3u8 video gönderildi');
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+      await bot.sendVideo(channelId, videoUrl, opts());
+      console.log('✅ Web video URL ile gönderildi');
       return true;
-    } catch (e) {
-      console.error(`❌ m3u8 ffmpeg başarısız: ${e.message}`);
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    } catch (err) {
+      console.log(`⚠️ Web video URL ile gönderilemedi: ${err.message?.slice(0, 60)}`);
       return false;
     }
   }
-
-  try {
-    await new Promise((resolve, reject) => {
-      const file = fs.createWriteStream(filePath);
-      let totalBytes = 0;
-      const doGet = (url, depth = 0) => {
-        if (depth > 5) return reject(new Error('çok fazla yönlendirme'));
-        const mod = url.startsWith('https') ? https : http;
-        const req = mod.get(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Referer': new URL(url).origin,
-          }
-        }, (res) => {
-          if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-            res.destroy();
-            doGet(res.headers.location, depth + 1);
-            return;
-          }
-          if (res.statusCode !== 200) { reject(new Error(`HTTP ${res.statusCode}`)); return; }
-          res.on('data', (chunk) => {
-            totalBytes += chunk.length;
-            if (totalBytes > MAX_VIDEO_SIZE_BYTES) {
-              req.destroy(); file.close();
-              reject(new Error('dosya çok büyük'));
-            }
-          });
-          res.pipe(file);
-          file.on('finish', () => { file.close(); resolve(); });
-          res.on('error', reject);
-        });
-        req.on('error', reject);
-        req.setTimeout(90000, () => { req.destroy(); reject(new Error('zaman aşımı')); });
-      };
-      doGet(videoUrl);
-    });
-
-    const stat = fs.statSync(filePath);
-    if (stat.size < 10000) throw new Error('dosya çok küçük (muhtemelen hata sayfası)');
-
-    const mb = Math.round(stat.size / 1024 / 1024);
-    console.log(`📤 Web video indirme tamamlandı (${mb}MB), Telegram'a yükleniyor...`);
-
-    // m3u8 ise ffmpeg ile mp4'e dönüştür
-    let uploadPath = filePath;
-    if (videoUrl.includes('.m3u8') || fs.readFileSync(filePath, 'utf8').slice(0, 10).includes('#EXTM3U')) {
-      const mp4Path = filePath.replace('.mp4', '_conv.mp4');
-      try {
-        await new Promise((res, rej) => {
-          const proc = spawn('ffmpeg', ['-i', filePath, '-c', 'copy', '-movflags', '+faststart', '-y', mp4Path], { timeout: 120000 });
-          proc.on('close', code => code === 0 ? res() : rej(new Error(`ffmpeg kod ${code}`)));
-          proc.on('error', rej);
-          setTimeout(() => { proc.kill(); rej(new Error('ffmpeg timeout')); }, 110000);
-        });
-        uploadPath = mp4Path;
-        console.log('✅ ffmpeg dönüştürme tamamlandı');
-      } catch (e) { console.error(`⚠️ ffmpeg dönüştürme başarısız: ${e.message}`); }
-    }
-
-    await bot.sendVideo(channelId, { source: uploadPath }, opts());
-    console.log('✅ Web video dosya olarak gönderildi');
-    return true;
-  } catch (err) {
-    console.error(`❌ Web video indirme/gönderme başarısız: ${err.message}`);
-    return false;
-  } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-  }
-}
 
 // ─── Feed Filtresi ────────────────────────────────────────────────────────────
 
@@ -2374,8 +2271,20 @@ async function publishNowInstant() {
   return '⚠️ Haber yayınlanamadı, lütfen tekrar deneyin.';
 }
 
-async function publishNextNews() {
-  if (settings.paused) { console.log('⏸ Bot duraklatıldı.'); return; }
+let publishingInProgress = false;
+
+  async function publishNextNews() {
+    if (publishingInProgress) { console.log('⏭ Önceki yayın döngüsü devam ediyor, atlanıyor.'); return; }
+    publishingInProgress = true;
+    try {
+      await _publishNextNewsInner();
+    } finally {
+      publishingInProgress = false;
+    }
+  }
+
+  async function _publishNextNewsInner() {
+    if (settings.paused) { console.log('⏸ Bot duraklatıldı.'); return; }
   if (!isWithinPublishHours()) {
     const start = String(settings.publishStartHour).padStart(2,'0');
     const end = String(settings.publishEndHour).padStart(2,'0');
@@ -2388,7 +2297,7 @@ async function publishNextNews() {
   let feed, items, validItems;
   const triedFeeds = new Set();
   let attempts = 0;
-  const maxAttempts = Math.min(8, RSS_FEEDS.length);
+  const maxAttempts = RSS_FEEDS.length; // Tüm feedleri dene, 8 ile sınırlama
 
   while (attempts < maxAttempts) {
     feed = getActiveFeed();
