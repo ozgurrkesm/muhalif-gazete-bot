@@ -10,6 +10,72 @@ import { spawn, spawnSync } from 'child_process';
 import os from 'os';
 import OpenAI from 'openai';
 
+  // ── Telegram Userbot (@vide entegrasyonu) ─────────────────────────────────────
+  let _userbotClient = null;
+  let _userbotConnecting = false;
+
+  async function getUserbotClient() {
+    if (_userbotClient) return _userbotClient;
+    if (_userbotConnecting) return null;
+    const apiId = parseInt(process.env.TG_API_ID || '');
+    const apiHash = process.env.TG_API_HASH || '';
+    const sessionStr = process.env.TG_SESSION || '';
+    if (!apiId || !apiHash || !sessionStr) return null;
+
+    try {
+      _userbotConnecting = true;
+      const { TelegramClient } = await import('telegram');
+      const { StringSession } = await import('telegram/sessions/index.js');
+      const client = new TelegramClient(new StringSession(sessionStr), apiId, apiHash, {
+        connectionRetries: 3,
+        retryDelay: 1000,
+      });
+      await client.connect();
+      _userbotClient = client;
+      console.log('✅ Userbot bağlandı (@vide hazır)');
+      return client;
+    } catch (e) {
+      console.error('❌ Userbot bağlantı hatası:', e.message);
+      return null;
+    } finally {
+      _userbotConnecting = false;
+    }
+  }
+
+  async function downloadVideoViaVide(videoUrl) {
+    const client = await getUserbotClient().catch(() => null);
+    if (!client) return null;
+
+    try {
+      console.log('📩 @vide'ye gönderiliyor:', videoUrl.slice(0, 60));
+      await client.sendMessage('@vide', { message: videoUrl });
+
+      // Yanıt için 120 sn bekle (3 sn aralıklarla kontrol)
+      for (let i = 0; i < 40; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const messages = await client.getMessages('@vide', { limit: 3 });
+        const videoMsg = messages.find(m =>
+          m.media && (m.media.className === 'MessageMediaDocument' || m.media.className === 'MessageMediaVideo')
+        );
+        if (videoMsg) {
+          console.log('📥 @vide video yanıtı alındı, indiriliyor...');
+          const tmpDir = path.join(os.tmpdir(), `vide_${Date.now()}`);
+          fs.mkdirSync(tmpDir, { recursive: true });
+          const tmpFile = path.join(tmpDir, 'video.mp4');
+          await client.downloadMedia(videoMsg.media, { outputFile: tmpFile });
+          console.log('✅ @vide video indirildi:', tmpFile);
+          return tmpFile;
+        }
+      }
+      console.log('⏰ @vide 120sn içinde yanıt vermedi');
+      return null;
+    } catch (e) {
+      console.error('❌ @vide hatası:', e.message);
+      return null;
+    }
+  }
+  
+
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1225,16 +1291,20 @@ async function getCobaltDirectUrl(videoUrl) {
 async function getYtdlpStreamUrl(videoUrl) {
   return new Promise((resolve) => {
     const args = [
-      '-g',
-      '--no-playlist',
-      '--extractor-args', 'youtube:player_client=ios,tv_embedded',
-      '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=720]/best',
-      '--no-check-certificate',
-      '--geo-bypass',
-      '--match-filter', 'duration < 600',
-      '--no-warnings',
-      videoUrl,
-    ];
+  const args = [
+        '-g',
+        '--no-playlist',
+        '--extractor-args', 'youtube:player_client=mweb,ios,web',
+        '-f', '18/22/bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
+        '--add-headers', 'Cookie:SOCS=CAI',
+        '--no-check-certificate',
+        '--geo-bypass',
+        '--geo-bypass-country', 'TR',
+        '--match-filter', 'duration < 900',
+        '--no-warnings',
+        '--no-part',
+        videoUrl,
+      ];
     let proc;
     try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
 
