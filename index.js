@@ -1654,7 +1654,27 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
   });
 }
 
-// YouTube video indirme: Invidious (ana) → yt-dlp (yedek)
+// cobalt.tools'dan video indir → dosya yolu döndür
+async function downloadFromCobalt(videoUrl) {
+  const cobaltUrl = await getCobaltDirectUrl(videoUrl);
+  if (!cobaltUrl) return null;
+  const tmpDir = path.join(os.tmpdir(), `cobalt_${Date.now()}`);
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+  const filePath = path.join(tmpDir, 'video.mp4');
+  try {
+    await httpsDownloadToFile(cobaltUrl, filePath, MAX_VIDEO_SIZE_BYTES, 'cobalt', 120000);
+    const stat = fs.statSync(filePath);
+    if (stat.size < 100000) throw new Error(`Çok küçük: ${stat.size} byte`);
+    console.log(`✅ cobalt indirme: ${Math.round(stat.size / 1024 / 1024)}MB`);
+    return filePath;
+  } catch (e) {
+    console.log(`⚠️ cobalt indirme başarısız: ${e.message?.slice(0, 60)}`);
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    return null;
+  }
+}
+
+// YouTube video indirme: cobalt → Invidious → yt-dlp
 async function downloadYoutubeVideo(videoUrl) {
     console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
 
