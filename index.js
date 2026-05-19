@@ -3011,8 +3011,50 @@ function adminPanelKeyboard() {
         { text: '📊 İstatistik', callback_data: 'admin_stats' },
         { text: '📰 Kaynaklar', callback_data: 'admin_sources' },
       ],
+      [
+        { text: '📋 Komutlar', callback_data: 'admin_commands' },
+      ],
     ],
   };
+}
+
+// ─── Komut Listesi ────────────────────────────────────────────────────────────
+
+const BOT_COMMANDS = [
+  { cmd: '/start',              icon: '👋', desc: 'Botu başlatır ve tanıtım mesajı gönderir' },
+  { cmd: '/admin',              icon: '🔧', desc: 'Admin yönetim panelini açar' },
+  { cmd: '/setadmin <şifre>',   icon: '🔐', desc: 'Şifreyle admin yetkisi alır' },
+  { cmd: '/haber',              icon: '📰', desc: 'Hemen bir haber yayınlar (beklemeden)' },
+  { cmd: '/sondakika',          icon: '🚨', desc: 'Son dakika haberlerini tarar ve yayınlar' },
+  { cmd: '/durum',              icon: '📊', desc: 'Botun durumunu ve istatistikleri gösterir' },
+  { cmd: '/kaynaklar',          icon: '📡', desc: 'Aktif haber kaynaklarını listeler' },
+  { cmd: '/filtre ekle <kw>',   icon: '🔔', desc: 'Anahtar kelime filtresi ekler — eşleşen haberler doğrudan gelir' },
+  { cmd: '/filtre sil <kw>',    icon: '🗑', desc: 'Belirtilen filtreyi siler' },
+  { cmd: '/filtrelerim',        icon: '📝', desc: 'Aktif filtrelerini listeler' },
+  { cmd: '/filtre temizle',     icon: '🧹', desc: 'Tüm filtreleri tek seferde siler' },
+  { cmd: '/video <url>',        icon: '🎬', desc: 'Verilen URL\'den video indirir ve kanala gönderir' },
+  { cmd: '/myid',               icon: '🪪', desc: 'Kendi Telegram Chat ID\'ini gösterir' },
+  { cmd: '/dur',                icon: '⏸', desc: 'Otomatik yayını duraklatır (sadece admin)' },
+  { cmd: '/baslat',             icon: '▶️', desc: 'Duraklatılmış yayını yeniden başlatır (sadece admin)' },
+  { cmd: '/saglik',             icon: '🩺', desc: 'Bot ve RSS kaynaklarının sağlık kontrolünü yapar' },
+];
+
+function commandsKeyboard() {
+  const rows = BOT_COMMANDS.map((c) => ([{
+    text: `${c.icon} ${c.cmd}`,
+    callback_data: `cmd_info_${BOT_COMMANDS.indexOf(c)}`,
+  }]));
+  rows.push([{ text: '◀️ Admin Paneline Dön', callback_data: 'admin_back' }]);
+  return { inline_keyboard: rows };
+}
+
+function commandInfoKeyboard(idx) {
+  const rows = [];
+  if (idx > 0) rows.push([{ text: '⬆️ Önceki', callback_data: `cmd_info_${idx - 1}` }]);
+  if (idx < BOT_COMMANDS.length - 1) rows.push([{ text: '⬇️ Sonraki', callback_data: `cmd_info_${idx + 1}` }]);
+  rows.push([{ text: '📋 Tüm Komutlar', callback_data: 'admin_commands' }]);
+  rows.push([{ text: '◀️ Admin Paneli', callback_data: 'admin_back' }]);
+  return { inline_keyboard: rows };
 }
 
 const DATE_RANGE_OPTIONS = [
@@ -3365,6 +3407,17 @@ bot.on('callback_query', async (query) => {
       break;
     }
 
+    case 'admin_commands':
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await bot.editMessageText(
+        `📋 *Bot Komutları*\n\nBir komuta tıklayarak ne işe yaradığını öğren:`,
+        {
+          chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+          reply_markup: commandsKeyboard(),
+        }
+      );
+      break;
+
     case 'admin_back':
       await bot.answerCallbackQuery(query.id).catch(() => {});
       await bot.editMessageText(adminPanelText(), {
@@ -3373,8 +3426,23 @@ bot.on('callback_query', async (query) => {
       });
       break;
 
-    default:
+    default: {
+      if (data.startsWith('cmd_info_')) {
+        const idx = parseInt(data.replace('cmd_info_', ''), 10);
+        const cmd = BOT_COMMANDS[idx];
+        if (!cmd) { await bot.answerCallbackQuery(query.id).catch(() => {}); break; }
+        await bot.answerCallbackQuery(query.id).catch(() => {});
+        await bot.editMessageText(
+          `${cmd.icon} *${cmd.cmd}*\n\n📌 ${cmd.desc}`,
+          {
+            chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+            reply_markup: commandInfoKeyboard(idx),
+          }
+        );
+        break;
+      }
       await bot.answerCallbackQuery(query.id).catch(() => {});
+    }
   }
 
   } catch (err) {
