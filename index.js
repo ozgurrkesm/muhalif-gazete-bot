@@ -2235,7 +2235,14 @@ async function publishNextNews() {
 
   for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
     const candidate = validItems[i];
-    const candidateUrl = candidate.link || candidate.guid;
+    const rawCandidateUrl = candidate.link || candidate.guid;
+
+    // Google News URL'lerini önce decode et (HTTP gerektirmez)
+    let candidateUrl = rawCandidateUrl;
+    if (rawCandidateUrl.includes('news.google.com')) {
+      candidateUrl = (await resolveGoogleNewsUrl(rawCandidateUrl)) || rawCandidateUrl;
+      if (candidateUrl !== rawCandidateUrl) console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
+    }
 
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
@@ -2400,14 +2407,40 @@ const BREAKING_MIN_GAP_MS = 90 * 1000; // İki son dakika arası min 90 sn
 
   
   
+// ─── Google News URL Çözücü (Base64 Decoder — HTTP isteği gerekmez) ──────────
+// Google News article URL'leri CBMi... ile başlayan Base64 kodlu veri içerir.
+// Bu veriyi decode edince asıl makale URL'si çıkar — Railway IP engelini aşar.
+function decodeGoogleNewsUrl(googleUrl) {
+  try {
+    const match = googleUrl.match(/articles\/([A-Za-z0-9_-]+)/);
+    if (!match) return null;
+    const b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
+    const buf = Buffer.from(b64 + '==', 'base64');
+    // Buffer içinde "http" byte dizisini bul
+    for (let i = 0; i < buf.length - 4; i++) {
+      if (buf[i] === 0x68 && buf[i+1] === 0x74 && buf[i+2] === 0x74 && buf[i+3] === 0x70) {
+        let end = i;
+        while (end < buf.length && buf[end] >= 0x20 && buf[end] <= 0x7e) end++;
+        const url = buf.slice(i, end).toString('ascii').split(/[\x00-\x1f\x10]/)[0];
+        if (url.startsWith('http') && !url.includes('news.google.com')) return url;
+      }
+    }
+  } catch {}
+  return null;
+}
+
 // ─── Google News Redirect Çözücü ─────────────────────────────────────────────
-function resolveGoogleNewsUrl(googleUrl, depth) {
+async function resolveGoogleNewsUrl(googleUrl, depth) {
   depth = depth || 0;
-  if (depth > 6) return Promise.resolve(null);
+  // 1. Önce Base64 decoder dene (HTTP gerektirmez, anlık)
+  const decoded = decodeGoogleNewsUrl(googleUrl);
+  if (decoded) { console.log(`🔓 Google News decode: ${decoded.slice(0, 80)}`); return decoded; }
+  if (depth > 4) return null;
+  // 2. HTTP redirect takip et
   return new Promise((resolve) => {
     let settled = false;
     const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-    const timer = setTimeout(() => done(null), 9000);
+    const timer = setTimeout(() => done(null), 7000);
     const req = https.get(googleUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36', 'Accept': 'text/html,application/xhtml+xml' },
     }, (res) => {
@@ -2432,7 +2465,7 @@ function resolveGoogleNewsUrl(googleUrl, depth) {
       res.on('error', () => done(null));
     });
     req.on('error', () => { clearTimeout(timer); done(null); });
-    req.setTimeout(8000, () => { req.destroy(); clearTimeout(timer); done(null); });
+    req.setTimeout(6000, () => { req.destroy(); clearTimeout(timer); done(null); });
   });
 }
 
