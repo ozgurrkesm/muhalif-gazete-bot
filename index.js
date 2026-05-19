@@ -1160,6 +1160,65 @@ async function getInvidiousVideoUrl(videoId) {
 }
 
 // Invidious proxy ile video indir — önce API'den mevcut itag'leri al, sonra paralel indir
+
+// ─── cobalt.tools API ile YouTube/web video indir ─────────────────────────────
+// Cobalt kendi altyapısından indirir — Railway datacenter IP'si YouTube'u bloklasa da çalışır
+async function downloadFromCobalt(videoUrl) {
+  const COBALT_INSTANCES = [
+    'https://api.cobalt.tools',
+    'https://cobalt.api.timelessnesses.me',
+    'https://cobalt.lunar.icu',
+  ];
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      console.log(`🌐 Cobalt deniyor: ${instance}`);
+      // POST isteği gönder
+      const body = JSON.stringify({
+        url: videoUrl,
+        videoQuality: '720',
+        downloadMode: 'auto',
+        youtubeVideoCodec: 'h264',
+      });
+      const cobaltUrl = new URL('/', instance);
+      const data = await new Promise((resolve, reject) => {
+        const req = https.request(
+          { hostname: cobaltUrl.hostname, path: '/', method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Content-Length': Buffer.byteLength(body) } },
+          (res) => {
+            let raw = '';
+            res.on('data', c => { raw += c; });
+            res.on('end', () => {
+              try { resolve(JSON.parse(raw)); }
+              catch { reject(new Error('JSON parse hatası')); }
+            });
+          }
+        );
+        req.on('error', reject);
+        setTimeout(() => req.destroy(new Error('timeout')), 15000);
+        req.write(body); req.end();
+      });
+
+      if (!data || !data.url || data.status === 'error') {
+        console.log(`⚠️ Cobalt ${instance}: ${data?.error?.code || 'yanıt yok'}`);
+        continue;
+      }
+
+      console.log(`✅ Cobalt URL alındı (${data.status}): ${data.url.slice(0, 60)}`);
+      const tmpDir = path.join(os.tmpdir(), `cobalt_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+      try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+      const filePath = path.join(tmpDir, data.filename || 'video.mp4');
+      await httpsDownloadToFile(data.url, filePath, MAX_VIDEO_SIZE_BYTES, instance, 180000);
+      const stat = fs.statSync(filePath);
+      if (stat.size < 50000) { console.log(`⚠️ Cobalt: dosya çok küçük (${stat.size} byte)`); try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {} continue; }
+      console.log(`✅ Cobalt indirme başarılı: ${Math.round(stat.size/1024/1024)}MB`);
+      return filePath;
+    } catch (e) {
+      console.log(`⚠️ Cobalt ${instance}: ${e.message?.slice(0, 60)}`);
+    }
+  }
+  return null;
+}
+
 async function downloadFromInvidious(videoId) {
   // Adım 1: Hangi instancetan API yanıtı alabiliyoruz ve hangi itag'ler mevcut?
   let bestItags = null;
@@ -1317,34 +1376,35 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
 
 // YouTube video indirme: Invidious (ana) → yt-dlp (yedek)
 async function downloadYoutubeVideo(videoUrl) {
-  console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
+    console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
 
-  // Video ID çıkar
-  const videoId =
-    videoUrl.match(/[?&]v=([^&]+)/)?.[1] ||
-    videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
-    videoUrl.match(/shorts\/([^?/]+)/)?.[1];
+    const videoId =
+      videoUrl.match(/[?&]v=([^&]+)/)?.[1] ||
+      videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
+      videoUrl.match(/shorts\/([^?/]+)/)?.[1];
 
-  if (!videoId) {
-    console.error('❌ Video ID çıkarılamadı');
+    if (!videoId) { console.error('❌ Video ID çıkarılamadı'); return null; }
+
+    // 1. cobalt.tools — kendi altyapısından indirir, datacenter IP bloklamasını aşar
+    console.log(`🌐 cobalt.tools deniyor (videoId: ${videoId})...`);
+    const cobaltFile = await downloadFromCobalt(videoUrl);
+    if (cobaltFile) return cobaltFile;
+
+    // 2. Invidious proxy
+    console.log(`🔄 Invidious deniyor...`);
+    const invFile = await downloadFromInvidious(videoId);
+    if (invFile) return invFile;
+
+    // 3. yt-dlp farklı istemcilerle
+    console.log('🔄 yt-dlp deneniyor...');
+    for (const client of ['tv_embedded', 'android', 'ios', 'web']) {
+      const filePath = await downloadWithYtdlp(videoUrl, client);
+      if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
+    }
+
+    console.error('❌ Tüm yöntemler başarısız (cobalt + Invidious + yt-dlp)');
     return null;
   }
-
-  // 1. Invidious ile dene (Railway IP bloğunu aşar)
-  console.log(`🔄 Invidious deniyor (videoId: ${videoId})...`);
-  const invFile = await downloadFromInvidious(videoId);
-  if (invFile) return invFile;
-
-  // 2. Yedek: yt-dlp farklı istemcilerle
-  console.log('🔄 Yedek: yt-dlp deneniyor...');
-  for (const client of ['tv_embedded', 'android', 'ios']) {
-    const filePath = await downloadWithYtdlp(videoUrl, client);
-    if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
-  }
-
-  console.error('❌ Tüm yöntemler başarısız (Invidious + yt-dlp)');
-  return null;
-}
 
 // sendYoutubeVideo: indir ve Telegram'a gönder
 async function sendYoutubeVideo(channelId, videoUrl, caption) {
@@ -2171,6 +2231,35 @@ async function downloadGenericWithYtdlp(pageUrl) {
 
 // ─── YouTube Başlık Araması (Invidious) ──────────────────────────────────────
 
+
+// YouTube HTML scrape ile video ara — Invidious başarısız olursa
+async function searchYouTubeScrape(query) {
+  try {
+    const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&sp=CAI%253D`;
+    const html = await new Promise((resolve, reject) => {
+      const req = https.get(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept-Language': 'tr-TR,tr;q=0.9',
+        }
+      }, (res) => {
+        let data = '';
+        res.on('data', c => { data += c; if (data.length > 500000) res.destroy(); });
+        res.on('end', () => resolve(data));
+      });
+      req.on('error', reject);
+      setTimeout(() => req.destroy(new Error('timeout')), 10000);
+    });
+    // ytInitialData içindeki videoId'leri yakala
+    const matches = [...html.matchAll(/"videoId":"([a-zA-Z0-9_-]{11})"/g)];
+    const ids = [...new Set(matches.map(m => m[1]))].slice(0, 3);
+    if (ids.length > 0) { console.log(`🔍 YouTube scrape: ${ids[0]}`); return ids[0]; }
+  } catch (e) {
+    console.log(`⚠️ YouTube scrape başarısız: ${e.message?.slice(0, 40)}`);
+  }
+  return null;
+}
+
 async function searchYouTubeByTitle(title, source) {
   const sourcePrefix = source ? source.replace(/[<>"{}|^[`]/g, '').trim() + ' ' : '';
   const rawQuery = (sourcePrefix + title).slice(0, 100).replace(/[<>"{}|^[`]/g, ' ').trim();
@@ -2207,8 +2296,13 @@ async function searchYouTubeByTitle(title, source) {
       } catch {}
     }
   }
-  return null;
-}
+  // YouTube HTML scrape son çare
+    const scrapeQuery = (sourcePrefix + title).slice(0, 80);
+    console.log(`🔍 YouTube scrape fallback: "${scrapeQuery.slice(0,50)}"`);
+    const scrapeId = await searchYouTubeScrape(scrapeQuery);
+    if (scrapeId) return scrapeId;
+    return null;
+  }
 
 
 async function checkBreakingNews() {
