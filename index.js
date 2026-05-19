@@ -883,12 +883,47 @@ function extractWebVideo(html) {
 
   // data-video-url, data-mp4, data-hls attribute
   const dataVid =
-    html.match(/data-(?:video-url|mp4|hls|stream)=["']([^"']+\.(?:mp4|m3u8))["']/i)?.[1];
+    html.match(/data-(?:video-url|mp4|hls|stream|videofile|video_url|video-src)=["']([^"']+\.(?:mp4|m3u8|webm))["']/i)?.[1];
   if (dataVid) return dataVid;
 
-  // CDN URL'leri (cdn.haberler.com, medya.ntv.com.tr vb.)
-  const cdnVid = html.match(/["'](https?:\/\/[^"']*\.(?:mp4|m3u8)(?:\?[^"']*)?)["']/i)?.[1];
-  if (cdnVid && cdnVid.length < 500) return cdnVid;
+  // ── Türk haber siteleri özel pattern'ları ────────────────────────────────
+
+  // Halk TV / Tele1 / KRT gibi siteler — flashvar / playerConfig içindeki URL
+  const flashVar = html.match(/flashvars[\s\S]{0,200}?["'](https?:[^"']+\.(?:mp4|m3u8))["']/i)?.[1];
+  if (flashVar) return flashVar;
+
+  // NTV / CNN Türk — playerData JSON
+  const playerData = html.match(/playerData\s*=\s*[{[]["'][^}]*?"(?:hls|mp4|video)"\s*:\s*"([^"]+\.(?:mp4|m3u8))"/i)?.[1];
+  if (playerData) return playerData;
+
+  // Sözcü / T24 — window.videoData veya window.pageData içindeki video
+  const windowData = html.match(/window\.(?:videoData|pageData|videoInfo|videoConfig|player_data)\s*=\s*\{[\s\S]{0,500}?"(?:url|src|file|hls)"\s*:\s*"([^"]+\.(?:mp4|m3u8))"/i)?.[1];
+  if (windowData) return windowData;
+
+  // __NEXT_DATA__ veya __NUXT__ içindeki video URL (Next.js / Nuxt tabanlı siteler)
+  const nextData = html.match(/__(?:NEXT_DATA|NUXT)__[\s\S]{0,2000}?"(?:videoUrl|hlsUrl|mp4Url|streamUrl|videoSrc)"\s*:\s*"([^"\\]+\.(?:mp4|m3u8))"/)? [1];
+  if (nextData) return nextData;
+
+  // Brightcove player (medya şirketleri tarafından yaygın kullanılır)
+  const brightcove = html.match(/data-video-id=["']([^"']+)["'][\s\S]{0,300}?["'](https?:[^"']+\.(?:mp4|m3u8))["']/i)?.[2];
+  if (brightcove) return brightcove;
+
+  // video.twimg.com (Twitter/X gömülü videolar)
+  const twitterVid = html.match(/(https?:\/\/video\.twimg\.com\/[^"'\s]+\.mp4[^"'\s]*)/i)?.[1];
+  if (twitterVid) return twitterVid;
+
+  // dailymotion embed
+  const dailymotion = html.match(/dailymotion\.com\/embed\/video\/([a-zA-Z0-9]+)/i)?.[1];
+  if (dailymotion) return `https://www.dailymotion.com/video/${dailymotion}`;
+
+  // Genel CDN URL'leri — daha geniş arama (uzantısız token'lı URL'ler dahil)
+  // Önce uzantılı
+  const cdnVid = html.match(/["'](https?:\/\/(?:cdn|medya|media|video|stream|vod|live)[^"'\s]*\.(?:mp4|m3u8)(?:\?[^"'\s]*)?)["']/i)?.[1];
+  if (cdnVid && cdnVid.length < 600) return cdnVid;
+
+  // Herhangi bir .mp4 veya .m3u8 URL (son çare)
+  const anyMp4 = html.match(/["'](https?:\/\/[^"'\s]+\.(?:mp4|m3u8)(?:\?[^"'\s]*)?)["']/i)?.[1];
+  if (anyMp4 && anyMp4.length < 600) return anyMp4;
 
   return null;
 }
@@ -1995,11 +2030,11 @@ async function publishNowInstant() {
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
-  // YouTube önce (her zaman çalışır), sonra direkt, sonra google
+  // Haber siteleri önce (web video çekme), YouTube son çare
   feedPool = [
-    ...feedPool.filter(f => f.type === 'youtube'),
     ...feedPool.filter(f => f.type === 'direct'),
     ...feedPool.filter(f => f.type === 'google'),
+    ...feedPool.filter(f => f.type === 'youtube'),
   ];
   console.log(`⚡ [Şimdi Yayınla] ${feedPool.length} feed...`);
   tgLog(`⚡ Şimdi Yayınla başladı — ${feedPool.length} kaynak taranıyor (kategori: ${cat})`);
@@ -2048,6 +2083,18 @@ async function publishNowInstant() {
             await notifyFilterUsers(title, rawDesc, url);
             console.log(`✅ [ŞY] YouTube video: ${title.slice(0, 50)}`);
             return '✅ Video yayınlandı! 🎬';
+          }
+          // YouTube başarısız — sayfadaki gömülü video var mı dene
+          tgLog(`⚠️ YouTube gönderilemedi, sayfa videosu aranıyor...`);
+          const ytPageVid = await fetchArticleHtmlAndExtractVideo(url);
+          if (ytPageVid && !/youtube|youtu\.be/i.test(ytPageVid)) {
+            const ok2 = await sendWebVideo(CHANNEL_ID, ytPageVid, caption);
+            if (ok2) {
+              sentType = 'video'; mediaStats.video++;
+              publishedUrls.add(url); persistPublishedUrls();
+              await notifyFilterUsers(title, rawDesc, url);
+              return '✅ Video yayınlandı! 🎬';
+            }
           }
           continue;
         }
