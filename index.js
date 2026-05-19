@@ -2100,11 +2100,13 @@ async function publishNowInstant() {
   for (const feed of feedPool) {
     let items;
     try { items = await fetchFeed(feed); } catch (e) { tgLog(`⚠️ Feed hatası (${feed.label}): ${e.message?.slice(0,80)}`); continue; }
-    if (!items || items.length === 0) { tgLog(`⚠️ Boş feed: ${feed.label}`); continue; }
+    if (!items || items.length === 0) { console.log(`ℹ️ Boş feed: ${feed.label}`); continue; }
 
     const candidates = items
       .filter(a => {
         if (!(a.link || a.guid)) return false;
+        // Zaten yayınlanmış veya denenmiş URL'leri atla
+        if (publishedUrls.has(a.link || a.guid)) return false;
         const t = cleanTitle(a.title);
         if (t.length < 10) return false;
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
@@ -2211,6 +2213,9 @@ async function publishNowInstant() {
         // ═══ 5. Görsel de yok — sonraki habere geç ══════════════════════
         if (sentType === 'none') {
           tgLog(`⏭ Medya bulunamadı, sonraki aday deneniyor...`);
+          // Bu URL'yi geçici olarak işaretle (session süresince tekrar deneme)
+          publishedUrls.add(url);
+          persistPublishedUrls();
         }
 
         if (sentType !== 'none') {
@@ -2291,7 +2296,7 @@ async function publishNextNews() {
     const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
 
     // 1. YouTube videoyu indir, Telegram'a gönder
-    const videoSent = await sendYoutubeVideo(CHANNEL_ID, url, caption);
+    const videoSent = await sendYouTubeVideoSmart(CHANNEL_ID, url, caption);
     if (videoSent) {
       sentType = 'video';
       if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
@@ -2302,11 +2307,10 @@ async function publishNextNews() {
       if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
       await notifyFilterUsers(title, rawDesc, url);
     } else {
-      // Video indirilemedi — YouTube'dan resim GÖNDERME, haberi atla
+      // Video indirilemedi — YouTube'dan resim GÖNDERME, haberi bu session'da atla
       console.log(`⏭ YouTube video indirilemedi, thumbnail gönderilmiyor — haber atlanıyor: ${title.slice(0,50)}`);
-      // publishedUrls'den kaldır ki bir sonraki çalışmada tekrar denenebilsin
-      publishedUrls.delete(url);
-      persistPublishedUrls();
+      // URL'yi publishedUrls'te bırak (sil değil) — aynı haberi tekrar deneme
+      // Sadece session'da atla, kalıcı olarak kaydedilmiş durumda
     }
     return;
   }
