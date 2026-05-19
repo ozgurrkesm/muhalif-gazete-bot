@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "gen-session": "node generate_session.js"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
     "rss-parser": "^3.13.0",
     "openai": "^4.103.0",
-    "dotenv": "^16.5.0"
+    "dotenv": "^16.5.0",
+    "telegram": "^2.26.22",
+    "input": "^1.0.1"
   }
 }
