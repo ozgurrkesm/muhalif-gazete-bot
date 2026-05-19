@@ -208,10 +208,10 @@ async function tgLog(text) {
 const RSS_FEEDS = [
   // ── Muhalif / Bağımsız Haber Kaynakları ──────────────────────────────────
   {
-    url: 'https://www.ankaajans.com/feed/',
+    url: 'https://news.google.com/rss/search?q=site:ankaajans.com&hl=tr&gl=TR&ceid=TR:tr',
     label: '📡 ANKA Ajans',
     source: 'ANKA',
-    type: 'direct',
+    type: 'google',
     category: 'politika',
   },
   {
@@ -1485,7 +1485,9 @@ async function getCobaltDirectUrl(videoUrl) {
     'https://cobalt.api.timelessnesses.me',
     'https://cobalt.lunar.icu',
     'https://cobalt-api.kwiatekmiki.com',
-    'https://co.wuk.sh',
+    'https://cobalt.privacyredirect.com',
+    'https://cobalt.esmailelbob.xyz',
+    'https://cob.frge.io',
   ];
 
   // cobalt v10+ API formatı
@@ -1495,6 +1497,7 @@ async function getCobaltDirectUrl(videoUrl) {
     downloadMode: 'auto',
     youtubeVideoCodec: 'h264',
     audioBitrate: '128',
+    filenameStyle: 'classic',
   });
   // Eski format (bazı instance'lar hâlâ eski API)
   const bodyOld = JSON.stringify({
@@ -1511,6 +1514,7 @@ async function getCobaltDirectUrl(videoUrl) {
         port: cobaltHost.port || 443,
         path: '/',
         method: 'POST',
+        rejectUnauthorized: false,
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
