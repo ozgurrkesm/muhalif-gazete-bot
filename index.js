@@ -2266,18 +2266,32 @@ async function publishNextNews() {
     return;
   }
 
-  const feed = getActiveFeed();
-  console.log(`📡 ${feed.label} çekiliyor...`);
-  const items = await fetchFeed(feed);
-
+  // Bir feed boş gelirse sıradakine geç — tüm feedleri dolaşana kadar dene (max 8)
   const needed = getNeededMediaType();
-  const validItems = sortByNeededMedia(
-    items.filter((a) => (a.link || a.guid) && !publishedUrls.has(a.link || a.guid) && isValidNewsItem(a, feed)),
-    needed
-  );
+  let feed, items, validItems;
+  const triedFeeds = new Set();
+  let attempts = 0;
+  const maxAttempts = Math.min(8, RSS_FEEDS.length);
 
-  if (validItems.length === 0) {
-    console.log(`ℹ️ ${feed.source}: yeni haber yok, atlanıyor.`);
+  while (attempts < maxAttempts) {
+    feed = getActiveFeed();
+    attempts++;
+    if (triedFeeds.has(feed.url)) continue;
+    triedFeeds.add(feed.url);
+
+    console.log(`📡 ${feed.label} çekiliyor... (deneme ${attempts}/${maxAttempts})`);
+    items = await fetchFeed(feed);
+    validItems = sortByNeededMedia(
+      items.filter((a) => (a.link || a.guid) && !publishedUrls.has(a.link || a.guid) && isValidNewsItem(a, feed)),
+      needed
+    );
+
+    if (validItems.length > 0) break;
+    console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
+  }
+
+  if (!validItems || validItems.length === 0) {
+    console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
     return;
   }
 
