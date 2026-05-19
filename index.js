@@ -495,7 +495,7 @@ const parser = new RssParser({
       ['media:group', 'mediaGroup', { keepArray: false }],
     ],
   },
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)',
     'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml',
