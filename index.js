@@ -1438,9 +1438,11 @@ async function getCobaltDirectUrl(videoUrl) {
 async function getYtdlpStreamUrl(videoUrl) {
   // Birden fazla player_client dene — datacenter IP'de bazıları çalışır
   const clientSets = [
+    'android_testsuite',
+    'android',
     'tv_embedded',
+    'ios',
     'mweb',
-    'web_creator',
   ];
   for (const client of clientSets) {
     const result = await new Promise((resolve) => {
@@ -1466,8 +1468,7 @@ async function getYtdlpStreamUrl(videoUrl) {
       proc.on('close', code => {
         clearTimeout(killTimer);
         if (code !== 0) {
-          console.log(`⚠️ yt-dlp [${client}] hata: ${stderr.slice(-200)}`);
-          tgLog(`⚠️ yt-dlp [${client}]: ${stderr.slice(-150)}`);
+          console.log(`⚠️ yt-dlp -g [${client}] hata: ${stderr.slice(-150)}`);
           resolve(null); return;
         }
         const urls = stdout.trim().split('\n').filter(l => l.startsWith('http'));
@@ -1534,51 +1535,69 @@ async function sendVideoByUrl(channelId, videoUrl, caption, extra = {}) {
   }
 }
 
-// ── 5. YouTube video gönder: URL önce, indirme son çare ────────────────────
+// ── 5. YouTube video gönder: yt-dlp -g önce (hızlı), tam indirme son çare ──
 async function sendYouTubeVideoSmart(channelId, videoUrl, caption) {
   const videoId =
     videoUrl.match(/[?&]v=([^&]+)/)?.[1] ||
     videoUrl.match(/youtu\.be\/([^?]+)/)?.[1] ||
     videoUrl.match(/shorts\/([^?/]+)/)?.[1];
 
-  if (!videoId) { tgLog('❌ YouTube video ID çıkarılamadı'); return false; }
+  if (!videoId) { console.log('❌ YouTube video ID çıkarılamadı'); return false; }
   console.log(`🎬 YouTube gönderme: ${videoId}`);
-  tgLog(`🎬 YouTube video deneniyor: ${videoId}`);
 
-  // 1. cobalt.tools → direkt MP4 URL
-  tgLog('1️⃣ cobalt.tools deneniyor...');
-  const cobaltUrl = await getCobaltDirectUrl(videoUrl);
-  if (cobaltUrl) {
-    const ok = await sendVideoByUrl(channelId, cobaltUrl, caption);
-    if (ok) { tgLog('✅ cobalt ile video gönderildi!'); return true; }
-    tgLog('⚠️ cobalt URL Telegram tarafından reddedildi');
-  } else { tgLog('⚠️ cobalt URL alınamadı'); }
+  // 1. yt-dlp -g → stream URL (hızlı, indirme yok, Telegram kendi alır)
+  console.log('1️⃣ yt-dlp -g stream URL deneniyor...');
+  const streamUrl = await getYtdlpStreamUrl(videoUrl);
+  if (streamUrl) {
+    const ok = await sendVideoByUrl(channelId, streamUrl, caption);
+    if (ok) { console.log('✅ yt-dlp stream URL ile gönderildi!'); return true; }
+    console.log('⚠️ Stream URL Telegram tarafından reddedildi, indirmeye geçiliyor...');
+  } else {
+    console.log('⚠️ yt-dlp -g başarısız');
+  }
 
-  // 2. Invidious stream URL
-  tgLog('2️⃣ Invidious stream deneniyor...');
+  // 2. Invidious stream URL (Railway'den Telegram'a URL ver)
+  console.log('2️⃣ Invidious stream URL deneniyor...');
   const invUrl = await getInvidiousStreamUrl(videoId);
   if (invUrl) {
     const ok = await sendVideoByUrl(channelId, invUrl, caption);
-    if (ok) { tgLog('✅ Invidious ile video gönderildi!'); return true; }
-    tgLog('⚠️ Invidious URL çalışmadı');
-  } else { tgLog('⚠️ Invidious URL alınamadı'); }
+    if (ok) { console.log('✅ Invidious stream ile gönderildi!'); return true; }
+    console.log('⚠️ Invidious URL Telegram tarafından reddedildi');
+  } else {
+    console.log('⚠️ Invidious URL alınamadı');
+  }
 
-  // 3. yt-dlp tam indirme
-  tgLog('3️⃣ yt-dlp indirme deneniyor...');
-  const filePath = await downloadYoutubeVideo(videoUrl);
-  if (filePath) {
-    try {
-      await bot.sendVideo(channelId, { source: filePath }, { caption, supports_streaming: true });
-      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
-      tgLog('✅ yt-dlp ile video yüklendi!');
-      return true;
-    } catch (e) {
-      tgLog(`⚠️ Video yükleme başarısız: ${e.message?.slice(0, 80)}`);
-      try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+  // 3. yt-dlp tam indirme — farklı player client'larla dene
+  console.log('3️⃣ yt-dlp tam indirme deneniyor...');
+  tgLog('⬇️ YouTube video indiriliyor...');
+  for (const client of ['android_testsuite', 'android', 'tv_embedded', 'ios', 'mweb']) {
+    console.log(`   client: ${client}`);
+    const filePath = await downloadWithYtdlp(videoUrl, client);
+    if (filePath) {
+      try {
+        const ok = await sendVideoFile(channelId, filePath, caption);
+        try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+        if (ok) { tgLog('✅ Video gönderildi!'); return true; }
+      } catch (e) {
+        try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+      }
     }
-  } else { tgLog('⚠️ yt-dlp indirme başarısız'); }
+  }
 
-  tgLog('❌ YouTube: video gönderilemedi, atlanıyor');
+  // 4. Invidious tam indirme (son çare)
+  console.log('4️⃣ Invidious tam indirme deneniyor...');
+  const invFile = await downloadFromInvidious(videoId);
+  if (invFile) {
+    try {
+      const ok = await sendVideoFile(channelId, invFile, caption);
+      try { fs.rmSync(path.dirname(invFile), { recursive: true, force: true }); } catch {}
+      if (ok) { return true; }
+    } catch {
+      try { fs.rmSync(path.dirname(invFile), { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  console.log('❌ YouTube: tüm yöntemler başarısız');
   return false;
 }
 
@@ -1811,7 +1830,7 @@ async function downloadFromCobalt(videoUrl) {
   }
 }
 
-// YouTube video indirme: cobalt → Invidious → yt-dlp
+// YouTube video indirme: yt-dlp → Invidious
 async function downloadYoutubeVideo(videoUrl) {
     console.log(`🎬 YouTube indiriliyor: ${videoUrl.slice(0, 60)}`);
 
@@ -1822,24 +1841,19 @@ async function downloadYoutubeVideo(videoUrl) {
 
     if (!videoId) { console.error('❌ Video ID çıkarılamadı'); return null; }
 
-    // 1. cobalt.tools — kendi altyapısından indirir, datacenter IP bloklamasını aşar
-    console.log(`🌐 cobalt.tools deniyor (videoId: ${videoId})...`);
-    const cobaltFile = await downloadFromCobalt(videoUrl);
-    if (cobaltFile) return cobaltFile;
-
-    // 2. Invidious proxy
-    console.log(`🔄 Invidious deniyor...`);
-    const invFile = await downloadFromInvidious(videoId);
-    if (invFile) return invFile;
-
-    // 3. yt-dlp farklı istemcilerle
-    console.log('🔄 yt-dlp deneniyor...');
-    for (const client of ['android_testsuite', 'tv_embedded', 'android', 'ios', 'mweb', 'web']) {
+    // 1. yt-dlp farklı player client'larla dene
+    for (const client of ['android_testsuite', 'android', 'tv_embedded', 'ios', 'mweb']) {
+      console.log(`🔄 yt-dlp client=${client} deniyor...`);
       const filePath = await downloadWithYtdlp(videoUrl, client);
       if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
     }
 
-    console.error('❌ Tüm yöntemler başarısız (cobalt + Invidious + yt-dlp)');
+    // 2. Invidious proxy (yedek)
+    console.log(`🔄 Invidious indirme deniyor...`);
+    const invFile = await downloadFromInvidious(videoId);
+    if (invFile) return invFile;
+
+    console.error('❌ Tüm yöntemler başarısız (yt-dlp + Invidious)');
     return null;
   }
 
