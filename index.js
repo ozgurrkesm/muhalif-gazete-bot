@@ -1357,44 +1357,48 @@ async function getCobaltDirectUrl(videoUrl) {
 
 // ── 2. yt-dlp -g → direkt stream URL al (indirme yok, sadece URL çıkar) ────
 async function getYtdlpStreamUrl(videoUrl) {
-  return new Promise((resolve) => {
-    const args = [
+  // Birden fazla player_client dene — datacenter IP'de bazıları çalışır
+  const clientSets = [
+    'tv_embedded',
+    'mweb',
+    'web_creator',
+  ];
+  for (const client of clientSets) {
+    const result = await new Promise((resolve) => {
+      const args = [
         '-g',
         '--no-playlist',
-        '--extractor-args', 'youtube:player_client=mweb,ios,web',
-        '-f', '18/22/bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best',
-        '--add-headers', 'Cookie:SOCS=CAI',
+        '--extractor-args', `youtube:player_client=${client}`,
+        '-f', '18/22/mp4/best[height<=480]',
         '--no-check-certificate',
         '--geo-bypass',
-        '--geo-bypass-country', 'TR',
-        '--match-filter', 'duration < 900',
         '--no-warnings',
         '--no-part',
+        '--socket-timeout', '15',
         videoUrl,
       ];
-    let proc;
-    try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
-
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', d => { stdout += d; });
-    proc.stderr.on('data', d => { stderr += d; });
-
-    const killTimer = setTimeout(() => { proc.kill('SIGKILL'); resolve(null); }, 30000);
-    proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
-    proc.on('close', code => {
-      clearTimeout(killTimer);
-      if (code !== 0) { console.log(`⚠️ yt-dlp -g başarısız: ${stderr.slice(-100)}`); resolve(null); return; }
-      // Çıktıda birden fazla URL olabilir (video+audio), ilkini al
-      const urls = stdout.trim().split('\n').filter(l => l.startsWith('http'));
-      if (urls.length > 0) {
-        console.log(`✅ yt-dlp -g URL: ${urls[0].slice(0, 70)}`);
-        resolve(urls[0]);
-      } else {
-        resolve(null);
-      }
+      let proc;
+      try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
+      let stdout = '', stderr = '';
+      proc.stdout.on('data', d => { stdout += d; });
+      proc.stderr.on('data', d => { stderr += d; });
+      const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(null); }, 25000);
+      proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
+      proc.on('close', code => {
+        clearTimeout(killTimer);
+        if (code !== 0) {
+          console.log(`⚠️ yt-dlp [${client}] hata: ${stderr.slice(-200)}`);
+          tgLog(`⚠️ yt-dlp [${client}]: ${stderr.slice(-150)}`);
+          resolve(null); return;
+        }
+        const urls = stdout.trim().split('\n').filter(l => l.startsWith('http'));
+        if (urls.length > 0) { console.log(`✅ yt-dlp [${client}] URL: ${urls[0].slice(0, 70)}`); resolve(urls[0]); }
+        else resolve(null);
+      });
     });
-  });
+    if (result) return result;
+  }
+  return null;
 }
 
 // ── 3. Invidious'tan direkt stream URL al (Railway indirmez, sadece URL) ────
@@ -3552,5 +3556,71 @@ checkBreakingNews(); // İlk kontrol hemen yap
 setTimeout(() => {
   publishNowInstant().then(r => console.log('🎬 Başlangıç video:', r || 'tamamlandı')).catch(e => console.error('🎬 Başlangıç video hata:', e.message));
 }, 10000);
+
+// ─── Yorum Sistemi ────────────────────────────────────────────────────────────
+// Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
+const pendingReplies = new Map(); // adminMsgId → { userId, userName }
+
+bot.on('message', async (msg) => {
+  if (!msg.text) return;
+  if (msg.text.startsWith('/')) return; // komutlar zaten işleniyor
+  if (msg.chat.type !== 'private') return;
+  const chatId = String(msg.chat.id);
+
+  // Admin ise normal davran
+  if (isAdmin(chatId)) {
+    // Admin bot üzerinden bir yoruma yanıt veriyorsa kullanıcıya ilet
+    if (msg.reply_to_message && pendingReplies.has(msg.reply_to_message.message_id)) {
+      const { userId, userName } = pendingReplies.get(msg.reply_to_message.message_id);
+      try {
+        await bot.sendMessage(userId, `📣 *Editörden yanıt:*\n\n${msg.text}`, { parse_mode: 'Markdown' });
+        await bot.sendMessage(msg.chat.id, `✅ Yanıtın ${userName} kullanıcısına iletildi.`);
+      } catch (e) {
+        await bot.sendMessage(msg.chat.id, `⚠️ Kullanıcıya iletilemedi: ${e.message}`);
+      }
+    }
+    return;
+  }
+
+  // Kullanıcı yorumu — admin'e ilet
+  const userName = msg.from?.first_name || msg.from?.username || 'Anonim';
+  const adminId = ADMIN_CHAT_ID || settings.adminChatIds[0];
+  if (!adminId) return;
+
+  try {
+    const forwarded = await bot.sendMessage(
+      adminId,
+      `💬 *Yeni Yorum*\n👤 ${userName} (ID: ${chatId})\n\n${msg.text.slice(0, 1000)}`,
+      {
+        parse_mode: 'Markdown',
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }
+          ]]
+        }
+      }
+    );
+    pendingReplies.set(forwarded.message_id, { userId: chatId, userName });
+    await bot.sendMessage(msg.chat.id, '✅ Yorumunuz editöre iletildi, teşekkürler!');
+  } catch (e) {
+    console.error('Yorum iletilemedi:', e.message);
+  }
+});
+
+// Admin "Yanıtla" butonuna basarsa
+bot.on('callback_query', async (query) => {
+  const data = query.data;
+  const chatId = String(query.message.chat.id);
+  if (!data?.startsWith('reply_user_')) return;
+  if (!isAdmin(chatId)) return;
+
+  const userId = data.replace('reply_user_', '');
+  await bot.answerCallbackQuery(query.id);
+  await bot.sendMessage(
+    query.message.chat.id,
+    `✏️ Kullanıcıya (${userId}) yanıt yazın — bu mesajı alıntılayarak (reply) gönderin:`,
+    { reply_markup: { force_reply: true } }
+  );
+});
 
 console.log('✅ Bot çalışıyor!');
