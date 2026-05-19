@@ -99,7 +99,7 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100 } },
+  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
 });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
@@ -3610,6 +3610,60 @@ bot.onText(/\/saglik/, async (msg) => {
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
   });
+// ─── Kaynak Kanaldan Video Aktar ─────────────────────────────────────────────
+bot.on('channel_post', async (msg) => {
+  try {
+    const chatUsername = (msg.chat.username || '').toLowerCase();
+    if (!VIDEO_SOURCE_CHANNELS.includes(chatUsername)) return;
+
+    // Sadece video veya animasyon içeren mesajları al
+    const hasVideo = !!(msg.video || msg.animation || (msg.document && msg.document.mime_type?.startsWith('video/')));
+    if (!hasVideo) return;
+
+    // Flood önleme — çok sık video gönderme
+    const now = Date.now();
+    if (now - lastVideoForwardTime < VIDEO_FORWARD_MIN_GAP_MS) {
+      console.log(`⏭ Video kanalı: flood önleme (son videodan ${Math.round((now - lastVideoForwardTime)/1000)}s geçti)`);
+      return;
+    }
+
+    // Orijinal caption varsa al, yoksa boş bırak (AI ekleyebilir)
+    const originalCaption = msg.caption || msg.text || '';
+    const title = originalCaption.slice(0, 100) || 'Video Haber';
+
+    // Duplicate kontrolü
+    const dedupKey = `channel_post_${msg.chat.id}_${msg.message_id}`;
+    if (publishedUrls.has(dedupKey)) return;
+
+    console.log(`📹 [${chatUsername}] Video mesajı alındı: ${title.slice(0,60)}`);
+
+    // AI ile kısa özet/başlık üret
+    let caption = '';
+    if (originalCaption.length > 5) {
+      const aiSum = await summarizeNews(title, originalCaption).catch(() => null);
+      const catTag = detectCategory(title, originalCaption);
+      const catEmoji = catTag ? `${catTag} ` : '📹 ';
+      caption = stripLinks(`${catEmoji}${title}`);
+      if (aiSum && aiSum.length > 5) caption += `
+
+${cleanArrows(stripLinks(aiSum))}`;
+    } else {
+      caption = '📹 Video Haber';
+    }
+    if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+
+    // Mesajı kopyala (orijinal sender gizlenir, bot göndermiş gibi görünür)
+    await bot.copyMessage(CHANNEL_ID, msg.chat.id, msg.message_id, { caption });
+    publishedUrls.add(dedupKey);
+    persistPublishedUrls();
+    lastVideoForwardTime = now;
+    mediaStats.video++;
+    console.log(`✅ [${chatUsername}] Video @muhalif_gazete'ye aktarıldı`);
+  } catch (err) {
+    console.error(`❌ channel_post hatası: ${err.message}`);
+  }
+});
+
 bot.on('polling_error', (err) => {
   trackError('polling', err.message);
   console.error(`⚠️ Polling hatası: ${err.message}`);
