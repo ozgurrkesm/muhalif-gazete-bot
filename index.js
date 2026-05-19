@@ -90,6 +90,12 @@ const aiClient = new OpenAI({
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
+
+// ─── Video Kaynak Kanalları ──────────────────────────────────────────────────
+// Bu kanallara bot admin olarak eklenmeli. Gelen videolar @muhalif_gazete'ye kopyalanır.
+const VIDEO_SOURCE_CHANNELS = ['asayisberkemaltr'];
+let lastVideoForwardTime = 0;
+const VIDEO_FORWARD_MIN_GAP_MS = 3 * 60 * 1000; // Min 3 dk arayla video
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
