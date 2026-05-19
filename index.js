@@ -1848,7 +1848,8 @@ async function fetchFeed(feed) {
 
 function isWithinPublishHours() {
   const now = new Date();
-  const hour = now.getHours();
+  // Railway UTC saatini Türkiye saatine çevir (UTC+3)
+  const hour = (now.getUTCHours() + 3) % 24;
   const start = settings.publishStartHour ?? 9;
   const end = settings.publishEndHour ?? 2;
   if (start <= end) return hour >= start && hour < end;
@@ -2136,11 +2137,11 @@ async function publishNextNews() {
     if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
   }
 
-  // Görsel bulunamazsa: haberi atla (Wikipedia alakasız görseller veriyor)
+  // Görsel bulunamazsa: metin olarak gönder (atlamak yerine)
   if (!chosenMedia.url && validItems.length > 0) {
     chosenItem = chosenItem || validItems[0];
     chosenMedia = { type: null, url: null };
-    console.log(`⚠️ Haber için görsel bulunamadı, atlanıyor`);
+    console.log(`⚠️ Haber için görsel bulunamadı, metin olarak gönderilecek`);
   }
 
   if (!chosenItem) return;
@@ -2229,9 +2230,15 @@ async function publishNextNews() {
         sentType = 'image';
       }
     } else {
-      // Medya yok — haberi atla
-      sentType = 'skip';
-      console.log('⏭ Görsel yok, haber atlanıyor');
+      // Medya yok — metin olarak gönder
+      try {
+        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts());
+        sentType = 'text';
+        console.log('📝 Görsel yok, metin olarak gönderildi');
+      } catch (e) {
+        console.error(`❌ Metin gönderme hatası: ${e.message}`);
+        sentType = 'skip';
+      }
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
