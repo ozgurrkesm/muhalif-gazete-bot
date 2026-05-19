@@ -198,21 +198,21 @@ async function tgLog(text) {
 const RSS_FEEDS = [
   // ── Muhalif / Bağımsız Haber Kaynakları ──────────────────────────────────
   {
-    url: 'https://news.google.com/rss/search?q=site:ankaajans.com&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://www.ankaajans.com/feed/',
     label: '📡 ANKA Ajans',
     source: 'ANKA',
-    type: 'google',
+    type: 'direct',
     category: 'politika',
   },
   {
-    url: 'https://www.cumhuriyet.com.tr/rss/son_dakika.xml',
+    url: 'https://www.cumhuriyet.com.tr/rss',
     label: '🗞 Cumhuriyet',
     source: 'Cumhuriyet',
     type: 'direct',
     category: 'genel',
   },
   {
-    url: 'https://www.cumhuriyet.com.tr/rss/4',
+    url: 'https://www.cumhuriyet.com.tr/rss',
     label: '🌍 Cumhuriyet | Dünya',
     source: 'Cumhuriyet',
     type: 'direct',
@@ -226,10 +226,10 @@ const RSS_FEEDS = [
     category: 'genel',
   },
   {
-    url: 'https://news.google.com/rss/search?q=site:halktv.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://halktv.com.tr/export/rss',
     label: '📺 Halk TV',
     source: 'Halk TV',
-    type: 'google',
+    type: 'direct',
     category: 'politika',
   },
   {
@@ -254,17 +254,17 @@ const RSS_FEEDS = [
     category: 'politika',
   },
   {
-    url: 'https://news.google.com/rss/search?q=site:birgun.net&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://www.birgun.net/rss',
     label: '🗞 BirGün',
     source: 'BirGün',
-    type: 'google',
+    type: 'direct',
     category: 'politika',
   },
   {
-    url: 'https://news.google.com/rss/search?q=site:odatv.com&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://www.odatv.com/rss.xml',
     label: '🗞 OdaTV',
     source: 'OdaTV',
-    type: 'google',
+    type: 'direct',
     category: 'politika',
   },
   {
@@ -275,17 +275,17 @@ const RSS_FEEDS = [
     category: 'politika',
   },
   {
-    url: 'https://news.google.com/rss/search?q=site:artigercek.com&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://artigercek.com/feed',
     label: '🗞 Artı Gerçek',
     source: 'Artı Gerçek',
-    type: 'google',
+    type: 'direct',
     category: 'politika',
   },
   {
-    url: 'https://news.google.com/rss/search?q=site:bianet.org&hl=tr&gl=TR&ceid=TR:tr',
+    url: 'https://bianet.org/rss/bianet',
     label: '🗞 Bianet',
     source: 'Bianet',
-    type: 'google',
+    type: 'direct',
     category: 'genel',
   },
   // ── Genel / Ekonomi ────────────────────────────────────────────────────────
@@ -431,7 +431,7 @@ const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
       category: 'genel',
     },
     {
-      url: 'https://www.cumhuriyet.com.tr/rss/son_dakika.xml',
+      url: 'https://www.cumhuriyet.com.tr/rss',
       label: '🚨 Cumhuriyet Son Dakika',
       source: 'Cumhuriyet',
       type: 'direct',
@@ -2045,11 +2045,15 @@ function getActiveFeed() {
 async function fetchFeed(feed) {
   try {
     // rss-parser bazı 301/302 redirect'leri takip etmez — elle takip et
+    // rejectUnauthorized: false → süresi geçmiş SSL sertifikalarını da kabul et
     let url = feed.url;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       const r = await new Promise((res) => {
         const mod = url.startsWith('https') ? https : http;
-        const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RSS reader)' } }, (resp) => {
+        const req = mod.get(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0' },
+          rejectUnauthorized: false,
+        }, (resp) => {
           if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
             resp.destroy();
             const loc = resp.headers.location;
@@ -2060,11 +2064,11 @@ async function fetchFeed(feed) {
           }
         });
         req.on('error', () => res({ ok: true }));
-        req.setTimeout(4000, () => { req.destroy(); res({ ok: true }); });
+        req.setTimeout(8000, () => { req.destroy(); res({ ok: true }); });
       });
       if (r.redirect) { url = r.redirect; } else { break; }
     }
-    const result = await parser.parseURL(url);
+    const result = await parser.parseURL(url, { rejectUnauthorized: false });
     return result.items || [];
   } catch (err) {
     console.error(`❌ RSS hatası (${feed.source}): ${err.message}`);
