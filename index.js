@@ -779,8 +779,8 @@ async function summarizeNews(title, description, articleBody = null) {
   }
   try {
     const prompt = fullContent
-      ? `Sen Türkçe yayın yapan bir haber kanalının editörüsün. Aşağıdaki haber içeriğini Türk okuyucuya yönelik 2-3 net cümleyle özetle. Ne olduğunu, kimin etkilendiğini ve önemini açıkla. Kaynak adı, tarih veya link ekleme. Yalnızca özeti yaz, başka hiçbir şey ekleme.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
-      : `Sen Türkçe yayın yapan bir haber kanalının editörüsün. Aşağıdaki haber başlığını 1-2 cümleyle açıkla. Ne olduğunu ve neden önemli olduğunu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
+      ? `Sen Türkçe bir haber kanalının editörüsün. Aşağıdaki haberi okuyuculara 2-3 cümleyle anlat. Önemli olan: başlıkta yazanı TEKRARLAMA, okuyucunun merak ettiği ayrıntıları yaz — kim ne dedi, ne karar verildi, neden önemli. "X şunu söyledi" gibi belirsiz ifade kullanma; varsa gerçek sözleri/rakamları/kararları yaz. Kaynak adı, tarih, link ekleme. Sadece özeti yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
+      : `Sen Türkçe bir haber kanalının editörüsün. Aşağıdaki haber başlığını oku. Başlıkta geçen konuyu 1-2 cümleyle arka plan bağlamıyla açıkla — okuyucunun bilmediği bir şey söyle. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih ekleme.\n\nBaşlık: ${title}`;
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
@@ -1257,47 +1257,69 @@ async function getCobaltDirectUrl(videoUrl) {
     'https://api.cobalt.tools',
     'https://cobalt.api.timelessnesses.me',
     'https://cobalt.lunar.icu',
+    'https://cobalt-api.kwiatekmiki.com',
+    'https://co.wuk.sh',
   ];
-  const body = JSON.stringify({
+
+  // cobalt v10+ API formatı
+  const bodyV10 = JSON.stringify({
     url: videoUrl,
     videoQuality: '720',
     downloadMode: 'auto',
     youtubeVideoCodec: 'h264',
+    audioBitrate: '128',
+  });
+  // Eski format (bazı instance'lar hâlâ eski API)
+  const bodyOld = JSON.stringify({
+    url: videoUrl,
+    vQuality: '720',
+    isAudioOnly: false,
   });
 
-  for (const instance of COBALT_INSTANCES) {
-    try {
-      const cobaltHost = new URL(instance);
-      const data = await new Promise((resolve, reject) => {
-        const reqOpts = {
-          hostname: cobaltHost.hostname,
-          port: cobaltHost.port || 443,
-          path: '/',
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Content-Length': Buffer.byteLength(body),
-            'User-Agent': 'Mozilla/5.0',
-          },
-        };
-        const req = https.request(reqOpts, (res) => {
-          let raw = '';
-          res.on('data', c => { raw += c; if (raw.length > 50000) res.destroy(); });
-          res.on('end', () => { try { resolve(JSON.parse(raw)); } catch { reject(new Error('json')); } });
-        });
-        req.on('error', reject);
-        const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, 12000);
-        req.on('close', () => clearTimeout(t));
-        req.write(body); req.end();
+  async function tryCobalt(instance, body) {
+    const cobaltHost = new URL(instance);
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: cobaltHost.hostname,
+        port: cobaltHost.port || 443,
+        path: '/',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      }, (res) => {
+        let raw = '';
+        res.on('data', c => { raw += c; if (raw.length > 100000) res.destroy(); });
+        res.on('end', () => { try { resolve(JSON.parse(raw)); } catch { reject(new Error('json')); } });
       });
+      req.on('error', reject);
+      const t = setTimeout(() => { req.destroy(); reject(new Error('timeout')); }, 20000);
+      req.on('close', () => clearTimeout(t));
+      req.write(body); req.end();
+    });
+  }
 
-      if (data && data.url && data.status !== 'error' && data.status !== 'redirect_error') {
-        console.log(`✅ cobalt URL (${data.status}): ${data.url.slice(0, 70)}`);
-        return data.url;
+  for (const instance of COBALT_INSTANCES) {
+    for (const body of [bodyV10, bodyOld]) {
+      try {
+        const data = await tryCobalt(instance, body);
+        console.log(`🔍 cobalt ${instance}: status=${data?.status}`);
+        if (data?.url && !['error', 'redirect_error', 'rate-limit'].includes(data.status)) {
+          console.log(`✅ cobalt URL (${data.status}): ${data.url.slice(0, 70)}`);
+          return data.url;
+        }
+        if (data?.status === 'picker' && data?.picker?.[0]?.url) {
+          console.log(`✅ cobalt picker URL: ${data.picker[0].url.slice(0, 70)}`);
+          return data.picker[0].url;
+        }
+        break; // bu instance yanıt verdi ama URL yok, eski formatı deneme
+      } catch (e) {
+        console.log(`⚠️ cobalt ${instance}: ${e.message?.slice(0, 40)}`);
+        break;
       }
-    } catch (e) {
-      console.log(`⚠️ cobalt ${instance}: ${e.message?.slice(0, 40)}`);
     }
   }
   return null;
@@ -1601,7 +1623,7 @@ async function sendVideoFile(channelId, filePath, caption) {
 }
 
 // yt-dlp ile video indir → dosya yolu döndür
-async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
+async function downloadWithYtdlp(videoUrl, clientArg = 'android_testsuite') {
   const tmpDir = path.join(os.tmpdir(), `ytdlp_${Date.now()}`);
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
@@ -1611,17 +1633,18 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'tv_embedded') {
       '--no-playlist',
       '--max-filesize', '48m',
       '--extractor-args', `youtube:player_client=${clientArg}`,
-      '-f', 'bestvideo[height>=720][height<=1080][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height>=720][ext=webm]+bestaudio/best[height>=720][height<=1080]/best[height<=1080]/best',
+      '-f', '18/22/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=480]/best',
       '--merge-output-format', 'mp4',
       '--no-part',
-      '--extractor-retries', '3',
-      '--socket-timeout', '60',
+      '--extractor-retries', '5',
+      '--socket-timeout', '30',
       '--no-check-certificate',
       '--geo-bypass',
-      '--match-filter', 'duration < 600',
-      '--user-agent', 'com.google.android.youtube/17.36.4 (Linux; U; Android 12) gzip',
+      '--geo-bypass-country', 'TR',
+      '--match-filter', 'duration < 900',
       '-o', outputTemplate,
       '--no-warnings',
+      '--add-headers', 'Cookie:SOCS=CAI',
       videoUrl,
     ];
 
@@ -1697,7 +1720,7 @@ async function downloadYoutubeVideo(videoUrl) {
 
     // 3. yt-dlp farklı istemcilerle
     console.log('🔄 yt-dlp deneniyor...');
-    for (const client of ['tv_embedded', 'android', 'ios', 'web']) {
+    for (const client of ['android_testsuite', 'tv_embedded', 'android', 'ios', 'mweb', 'web']) {
       const filePath = await downloadWithYtdlp(videoUrl, client);
       if (filePath) { console.log(`✅ yt-dlp başarılı (${client})`); return filePath; }
     }
