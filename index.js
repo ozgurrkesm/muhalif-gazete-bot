@@ -3387,16 +3387,25 @@ bot.onText(/\/filtrelerim/, (msg) => {
 });
 
 
-  bot.onText(/\/sondakika/, async (msg) => {
-    if (!isAdmin(msg.chat.id)) return;
-    await bot.sendMessage(msg.chat.id, '🚨 Son dakika haberleri taranıyor...');
-    await checkBreakingNews();
-    await bot.sendMessage(msg.chat.id, '✅ Son dakika taraması tamamlandı!');
-  });
+bot.onText(/\/sondakika/, async (msg) => {
+  if (!isAdmin(msg.chat.id)) {
+    await bot.sendMessage(msg.chat.id, '⛔ Bu komut sadece adminlere açık.\n\n/setadmin <şifre> komutuyla admin olabilirsin.');
+    return;
+  }
+  await bot.sendMessage(msg.chat.id, '🚨 Son dakika haberleri taranıyor...');
+  await checkBreakingNews();
+  await bot.sendMessage(msg.chat.id, '✅ Son dakika taraması tamamlandı!');
+});
 
-  bot.onText(/\/haber/, async (msg) => {
+bot.onText(/\/haber/, async (msg) => {
   await bot.sendMessage(msg.chat.id, '📰 Haber çekiliyor...');
-  await publishNextNews();
+  // publishNowInstant kullan: saat kısıtı ve duraklat kontrolü yok, her zaman çalışır
+  const result = await publishNowInstant().catch(e => `❌ Hata: ${e.message}`);
+  if (result) {
+    await bot.sendMessage(msg.chat.id, result);
+  } else {
+    await bot.sendMessage(msg.chat.id, '⚠️ Şu an yayınlanacak uygun haber bulunamadı.');
+  }
 });
 
 bot.onText(/\/video/, async (msg) => {
