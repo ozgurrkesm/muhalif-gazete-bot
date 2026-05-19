@@ -575,6 +575,12 @@ function persistPublishedUrls() {
 const publishedUrls = loadPublishedUrls();
 setInterval(persistPublishedUrls, 30 * 1000);
 
+// Son dakika için ayrı in-memory cache — disk'e yazılmaz, restart'ta sıfırlanır
+// Böylece publishedUrls'teki eski kayıtlar son dakikayı engellemez
+const breakingPublishedUrls = new Set();
+// Her 2 saatte bir temizle (çok büyümemesi için)
+setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
+
 // ─── Başlık bazlı tekrar engeli — dosyaya da kaydediliyor (Railway restart'ta sıfırlanmaz) ──
 function loadPublishedTitles() {
   try {
@@ -2808,12 +2814,29 @@ async function checkBreakingNews() {
     return;
   }
 
-  for (const feed of BREAKING_NEWS_FEEDS) {
+  // BREAKING_NEWS_FEEDS + ana muhalif feedlerden son dakika kelimesi içerenleri de tara
+  const allBreakingFeeds = [
+    ...BREAKING_NEWS_FEEDS,
+    ...RSS_FEEDS.filter(f => ['politika', 'genel'].includes(f.category) && f.type !== 'youtube'),
+  ];
+
+  for (const feed of allBreakingFeeds) {
     try {
       const items = await fetchFeed(feed);
       const newItems = items.filter(item => {
         const u = item.link || item.guid;
-        return u && !publishedUrls.has(u) && isValidNewsItem(item, feed) && isBreakingNews(item.title || '');
+        if (!u) return false;
+        // breakingPublishedUrls: in-memory, restart'ta sıfırlanır → eski kayıtlar engellemez
+        if (breakingPublishedUrls.has(u)) return false;
+        // publishedUrls'te varsa ama son dakika feed'inden geliyorsa yine de geç
+        // (normal feedlerden gelenler için publishedUrls de kontrol et)
+        const isBreakingFeed = BREAKING_NEWS_FEEDS.includes(feed);
+        if (!isBreakingFeed && publishedUrls.has(u)) return false;
+        if (!isValidNewsItem(item, feed)) return false;
+        // Özel son dakika feedlerinde başlık filtresi zorunlu değil (zaten SD içerik)
+        // Normal feedlerden gelenler için başlık kontrolü zorunlu
+        if (!isBreakingFeed && !isBreakingNews(item.title || '')) return false;
+        return true;
       });
 
       for (const item of newItems.slice(0, 1)) {
@@ -2822,6 +2845,7 @@ async function checkBreakingNews() {
         if (isTitleDuplicate(checkTitle)) continue;
 
         publishedUrls.add(url);
+        breakingPublishedUrls.add(url);
         persistPublishedUrls();
         lastBreakingNewsTime = Date.now();
 
