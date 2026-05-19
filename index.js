@@ -1947,7 +1947,27 @@ function getActiveFeed() {
 
 async function fetchFeed(feed) {
   try {
-    const result = await parser.parseURL(feed.url);
+    // rss-parser bazı 301/302 redirect'leri takip etmez — elle takip et
+    let url = feed.url;
+    for (let i = 0; i < 3; i++) {
+      const r = await new Promise((res) => {
+        const mod = url.startsWith('https') ? https : http;
+        const req = mod.get(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; RSS reader)' } }, (resp) => {
+          if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+            resp.destroy();
+            const loc = resp.headers.location;
+            res({ redirect: loc.startsWith('http') ? loc : new URL(loc, url).href });
+          } else {
+            resp.destroy();
+            res({ ok: true });
+          }
+        });
+        req.on('error', () => res({ ok: true }));
+        req.setTimeout(4000, () => { req.destroy(); res({ ok: true }); });
+      });
+      if (r.redirect) { url = r.redirect; } else { break; }
+    }
+    const result = await parser.parseURL(url);
     return result.items || [];
   } catch (err) {
     console.error(`❌ RSS hatası (${feed.source}): ${err.message}`);
@@ -1992,14 +2012,16 @@ async function publishNowInstant() {
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
+  // YouTube önce (her zaman çalışır), sonra direkt, sonra google
   feedPool = [
-    ...feedPool.filter(f => f.type !== 'youtube'),
     ...feedPool.filter(f => f.type === 'youtube'),
+    ...feedPool.filter(f => f.type === 'direct'),
+    ...feedPool.filter(f => f.type === 'google'),
   ];
   console.log(`⚡ [Şimdi Yayınla] ${feedPool.length} feed...`);
   tgLog(`⚡ Şimdi Yayınla başladı — ${feedPool.length} kaynak taranıyor (kategori: ${cat})`);
 
-  for (const feed of feedPool.slice(0, 10)) {
+  for (const feed of feedPool) {
     let items;
     try { items = await fetchFeed(feed); } catch (e) { tgLog(`⚠️ Feed hatası (${feed.label}): ${e.message?.slice(0,80)}`); continue; }
     if (!items || items.length === 0) { tgLog(`⚠️ Boş feed: ${feed.label}`); continue; }
@@ -2012,7 +2034,7 @@ async function publishNowInstant() {
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
         return true;
       })
-      .slice(0, 3);
+      .slice(0, 5);
 
     if (candidates.length === 0) { tgLog(`⏭ ${feed.label}: uygun içerik yok`); continue; }
     tgLog(`🔍 ${feed.label}: ${candidates.length} aday bulundu`);
