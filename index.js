@@ -984,7 +984,16 @@ async function fetchSubjectImage(title) {
 // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
 function cleanTitle(title) {
-  return (title || '').replace(/\s*-\s*[^-]+$/, '').trim() || title || '';
+  let t = (title || '').trim();
+  // "Gerçek Haber... 19 Mayıs 2026 İlker Karagöz ile Çalar Saat" → sadece "Gerçek Haber"
+  t = t.replace(/\s*\.{2,3}\s*\d{1,2}\s+\w+\s+\d{4}.*$/, '').trim();
+  // "Haber Başlığı - Program Adı" veya "- İlker Karagöz ile ..." → sonu kes
+  t = t.replace(/\s*[-–|]\s*[A-ZĞÜŞÖÇİa-zğüşöçı]+\s+(?:ile|de|da)\s+.+$/, '').trim();
+  // Başta tarih öneki: "19 Mayıs 2026 Haber başlığı" → tarihi çıkar
+  t = t.replace(/^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+/, '').trim();
+  // Orijinal: sondaki "- kaynak adı" temizle
+  t = t.replace(/\s*-\s*[^-]{3,}$/, '').trim();
+  return t || title || '';
 }
 
 const SON_DAKIKA_KEYWORDS = ['son dakika', 'acil', 'flaş', 'flash', 'breaking'];
@@ -1042,6 +1051,16 @@ const BLOCKED_TITLE_PATTERNS = [
   /toplantı notları/i, /basın açıklaması listesi/i,
   /#canl[iı]/i, /canl[iı]\s*yay[iı]n/i, /\bLIVE\b/i,
   /\b(ile\s+rota|ile\s+başak|programı?|özel yayın|stüdyo|röportaj kuşağı)\b/i,
+  // TV program / yayın listesi başlıkları
+  /\bçalar saat\b/i,
+  /\bana haber(ler)?\b/i,
+  /\bsabah bülteni\b/i,
+  /\bhaber kuşağı\b/i,
+  /\bhaberleri.*\b\d{4}\b/i,
+  /\byayın akışı\b/i,
+  /\bkuşak yayın\b/i,
+  // Sadece tarih + program adından oluşan başlıklar (gerçek haber değil)
+  /^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+[A-ZĞÜŞÖÇİ]/,
 ];
 
 function isRecentNews(item) {
@@ -1992,20 +2011,31 @@ async function publishNowInstant() {
     ...feedPool.filter(f => f.type === 'youtube'),
   ];
   console.log(`⚡ [Şimdi Yayınla] ${feedPool.length} feed...`);
+  tgLog(`⚡ Şimdi Yayınla başladı — ${feedPool.length} kaynak taranıyor (kategori: ${cat})`);
 
   for (const feed of feedPool.slice(0, 10)) {
     let items;
-    try { items = await fetchFeed(feed); } catch { continue; }
-    if (!items || items.length === 0) continue;
+    try { items = await fetchFeed(feed); } catch (e) { tgLog(`⚠️ Feed hatası (${feed.label}): ${e.message?.slice(0,80)}`); continue; }
+    if (!items || items.length === 0) { tgLog(`⚠️ Boş feed: ${feed.label}`); continue; }
 
     const candidates = items
-      .filter(a => (a.link || a.guid) && (a.title || '').length >= 10)
+      .filter(a => {
+        if (!(a.link || a.guid)) return false;
+        const t = cleanTitle(a.title);
+        if (t.length < 10) return false;
+        if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
+        return true;
+      })
       .slice(0, 3);
+
+    if (candidates.length === 0) { tgLog(`⏭ ${feed.label}: uygun içerik yok`); continue; }
+    tgLog(`🔍 ${feed.label}: ${candidates.length} aday bulundu`);
 
     for (const item of candidates) {
       const url = item.link || item.guid;
       const { title, rawDesc, description, prefix } = buildItemMeta(item, feed);
       const sourceName = feed.source || '';
+      tgLog(`📌 Deneniyor: "${title.slice(0, 80)}"`);
 
       const aiSummary = await summarizeNews(title, rawDesc || description);
       const catTag = detectCategory(title, rawDesc);
