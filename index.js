@@ -3025,6 +3025,7 @@ const BOT_COMMANDS = [
   { cmd: '/admin',              icon: '🔧', desc: 'Admin yönetim panelini açar' },
   { cmd: '/setadmin <şifre>',   icon: '🔐', desc: 'Şifreyle admin yetkisi alır' },
   { cmd: '/haber',              icon: '📰', desc: 'Hemen bir haber yayınlar (beklemeden)' },
+  { cmd: '/ara <konu>',         icon: '🔍', desc: 'Belirtilen konuyu Google Haberler\'de arar ve en güncel haberi kanala yayınlar' },
   { cmd: '/sondakika',          icon: '🚨', desc: 'Son dakika haberlerini tarar ve yayınlar' },
   { cmd: '/durum',              icon: '📊', desc: 'Botun durumunu ve istatistikleri gösterir' },
   { cmd: '/kaynaklar',          icon: '📡', desc: 'Aktif haber kaynaklarını listeler' },
@@ -3160,9 +3161,10 @@ bot.onText(/\/start/, (msg) => {
     `/filtrelerim — Filtrelerimi göster\n` +
     `/filtre temizle — Tüm filtreleri sil\n` +
     `/haber — Anında haber yayınla\n` +
+    `/ara <konu> — Web'den konu ara ve kanala yayınla\n` +
     `/kaynaklar — Haber kaynakları\n` +
-    `/durum — Bot durumu`
-`/video <url> — URL'den video gönder`
+    `/durum — Bot durumu\n` +
+    `/video <url> — URL'den video gönder`
   );
 });
 
@@ -3492,6 +3494,92 @@ bot.onText(/\/filtrelerim/, (msg) => {
   }
 });
 
+
+// ─── /ara Komutu: Konuya göre web'den haber ara ve kanala yayınla ─────────────
+
+bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const konu = (match[1] || '').trim();
+
+  if (!konu) {
+    await bot.sendMessage(chatId,
+      '🔍 Kullanım:\n/ara <konu>\n\nÖrnekler:\n/ara deprem\n/ara ekonomi\n/ara galatasaray'
+    );
+    return;
+  }
+
+  await bot.sendMessage(chatId, `🔍 "${konu}" aranıyor...`);
+
+  try {
+    // Google News RSS ile ara
+    const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(konu)}&hl=tr&gl=TR&ceid=TR:tr`;
+    const feed = await parser.parseURL(searchUrl);
+    const items = (feed.items || []).filter(it => {
+      const title = it.title || '';
+      return title.length > 10 && !BLOCKED_TITLE_PATTERNS.some(p => p.test(title));
+    });
+
+    if (items.length === 0) {
+      await bot.sendMessage(chatId, `❌ "${konu}" için haber bulunamadı.`);
+      return;
+    }
+
+    // Yayınlanmamış ilk haberi bul
+    const item = items.find(it => !publishedUrls.has(it.link)) || items[0];
+    const title = cleanTitle(item.title || '');
+    const link = item.link || '';
+    const description = item.contentSnippet || item.summary || '';
+
+    await bot.sendMessage(chatId, `📰 Haber bulundu: ${title.slice(0, 80)}...\n⬆️ Kanala gönderiliyor...`);
+
+    // Görseli çek
+    let imageUrl = extractMedia(item)?.url || null;
+    if (!imageUrl) imageUrl = await fetchOgImage(link);
+    if (!imageUrl) imageUrl = await fetchSubjectImage(title);
+
+    // AI özeti
+    const aiSummary = await summarizeNews(title, description).catch(() => null);
+    const categoryTag = detectCategory(title, description);
+    const catE = categoryTag ? `${categoryTag} ` : '';
+
+    let caption = `${catE}*${title}*`;
+    if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
+    caption += `\n\n🔗 [Habere git](${link})`;
+    caption = caption.slice(0, 1024);
+
+    // Kanala gönder
+    let sent = false;
+    if (imageUrl) {
+      try {
+        const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, {
+          caption,
+          parse_mode: 'Markdown',
+        });
+        registerSentMessage(sentMsg.message_id, title);
+        sent = true;
+      } catch {}
+    }
+
+    if (!sent) {
+      const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, {
+        parse_mode: 'Markdown',
+        disable_web_page_preview: false,
+      });
+      registerSentMessage(sentMsg.message_id, title);
+      sent = true;
+    }
+
+    if (sent) {
+      publishedUrls.add(link);
+      persistPublishedUrls();
+      await bot.sendMessage(chatId, `✅ "${konu}" haberi kanala yayınlandı!`);
+    }
+
+  } catch (err) {
+    console.error('❌ /ara hatası:', err.message);
+    await bot.sendMessage(chatId, `❌ Hata: ${err.message.slice(0, 200)}`);
+  }
+});
 
 bot.onText(/\/sondakika/, async (msg) => {
   if (!isAdmin(msg.chat.id)) {
