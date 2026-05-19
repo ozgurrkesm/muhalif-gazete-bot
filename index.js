@@ -2358,31 +2358,40 @@ async function publishNextNews() {
   const MAX_TRIES = 10;
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
-  let chosenMedia2 = null;  // İkinci görsel (media group için)
+  let chosenMedia2 = null;
   let chosenOgDesc = null;
   let chosenArticleBody = null;
+  let chosenCandidateUrl = null; // Çözülmüş asıl URL (Google News decode sonrası)
+  let textFallbackItem = null;   // Medya bulunamazsa metin olarak gönderilecek ilk geçerli haber
 
   for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
     const candidate = validItems[i];
     const rawCandidateUrl = candidate.link || candidate.guid;
 
-    // Google News URL'lerini önce decode et (HTTP gerektirmez)
+    // İlk geçerli haberi metin fallback olarak sakla
+    if (!textFallbackItem) textFallbackItem = candidate;
+
+    // Google News URL'lerini önce decode et
     let candidateUrl = rawCandidateUrl;
     if (rawCandidateUrl.includes('news.google.com')) {
       candidateUrl = (await resolveGoogleNewsUrl(rawCandidateUrl)) || rawCandidateUrl;
-      if (candidateUrl !== rawCandidateUrl) console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
+      if (candidateUrl !== rawCandidateUrl) {
+        console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
+        // Çözülmüş URL'yi de hemen engelle (aynı haber farklı wrapper ile gelmesin)
+        publishedUrls.add(candidateUrl);
+      }
     }
 
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
 
-    // Web sayfasından video çıkar (her zaman dene)
+    // Web sayfasından video çıkar
     if (!media.url || media.type !== 'video') {
       const webVid = await fetchArticleHtmlAndExtractVideo(candidateUrl);
       if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Web video: ${webVid.slice(0, 60)}`); }
     }
 
-    // OG meta çek (görsel + açıklama + 2. görsel)
+    // OG meta çek (görsel + açıklama)
     const ogMeta = await fetchOgMeta(candidateUrl);
     if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
     if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
@@ -2391,18 +2400,27 @@ async function publishNextNews() {
       media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
     }
 
-    // İkinci görsel topla (aynı haberden)
     if (media.type === 'image' && !chosenMedia2 && ogMeta.image2) {
       chosenMedia2 = upgradeImageUrl(ogMeta.image2);
     }
 
-    if (media.url) { chosenItem = candidate; chosenMedia = media; break; }
+    if (media.url) {
+      chosenItem = candidate;
+      chosenMedia = media;
+      chosenCandidateUrl = candidateUrl;
+      break;
+    }
   }
 
-  // Görsel/video bulunamazsa haberi atla (metin olarak gönderme)
+  // Medya bulunamazsa ilk geçerli haberi metin olarak gönder (atlamak yerine)
   if (!chosenMedia.url) {
-    console.log(`⏭ [${feed.source}] Medyalı haber bulunamadı, atlanıyor.`);
-    return;
+    if (!textFallbackItem) {
+      console.log(`⏭ [${feed.source}] Haber bulunamadı, atlanıyor.`);
+      return;
+    }
+    console.log(`📝 [${feed.source}] Medya yok — metin olarak gönderiliyor.`);
+    chosenItem = textFallbackItem;
+    chosenCandidateUrl = textFallbackItem.link || textFallbackItem.guid;
   }
 
   if (!chosenItem) return;
@@ -2414,7 +2432,9 @@ async function publishNextNews() {
     return;
   }
 
+  // RSS URL ve çözülmüş asıl URL'nin ikisini de engelle (farklı wrapper'larla tekrar gelmesin)
   publishedUrls.add(url);
+  if (chosenCandidateUrl && chosenCandidateUrl !== url) publishedUrls.add(chosenCandidateUrl);
   persistPublishedUrls();
 
   const { title, rawDesc, description, sonDakika, prefix } = buildItemMeta(chosenItem, feed);
@@ -2491,9 +2511,9 @@ async function publishNextNews() {
         sentType = 'image';
       }
     } else {
-      // Medya yok — haberi atla (metin olarak gönderme)
-      sentType = 'skip';
-      console.log('⏭ Medya yok, haber atlanıyor (metin gönderme kapalı)');
+      // Medya yok — metin olarak gönder
+      sentMsg = await bot.sendMessage(CHANNEL_ID, caption, sendOpts()).catch(() => null);
+      sentType = sentMsg ? 'text' : 'skip';
     }
     console.log(`✅ [${feed.source}] [${sentType}]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
   } catch (err) {
