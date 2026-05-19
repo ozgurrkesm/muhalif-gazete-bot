@@ -47,7 +47,7 @@ import OpenAI from 'openai';
     if (!client) return null;
 
     try {
-      console.log('📩 @vide'ye gönderiliyor:', videoUrl.slice(0, 60));
+      console.log(`📩 @vide'ye gönderiliyor: ${videoUrl.slice(0, 60)}`);
       await client.sendMessage('@vide', { message: videoUrl });
 
       // Yanıt için 120 sn bekle (3 sn aralıklarla kontrol)
@@ -1291,7 +1291,6 @@ async function getCobaltDirectUrl(videoUrl) {
 async function getYtdlpStreamUrl(videoUrl) {
   return new Promise((resolve) => {
     const args = [
-  const args = [
         '-g',
         '--no-playlist',
         '--extractor-args', 'youtube:player_client=mweb,ios,web',
