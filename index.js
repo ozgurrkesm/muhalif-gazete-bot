@@ -2642,68 +2642,65 @@ async function resolveGoogleNewsUrl(googleUrl, depth) {
   });
 }
 
-// ─── Makale sayfasından tüm görselleri topla (OG yoksa fallback) ─────────────
+  // ─── Makale sayfasından tüm görselleri topla (fetch tabanlı, OG yoksa fallback) ──
   async function scrapePageImages(url) {
     if (!url || url.includes('news.google.com')) return [];
-    return new Promise((resolve) => {
-      const results = [];
-      let settled = false;
-      const done = () => { if (!settled) { settled = true; resolve(results); } };
-      const timer = setTimeout(done, 8000);
-      const mod = url.startsWith('https') ? https : http;
-      const req = mod.get(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'Accept': 'text/html',
-        },
-        rejectUnauthorized: false,
-      }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.destroy(); clearTimeout(timer);
-          const loc = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, url).href;
-          scrapePageImages(loc).then(r => { r.forEach(x => results.push(x)); done(); });
-          return;
-        }
-        let html = '';
-        res.on('data', c => { html += c; if (html.length > 120000) res.destroy(); });
-        res.on('end', () => {
-          clearTimeout(timer);
-          // 1. og:image / twitter:image
-          const ogMatch = html.match(/<meta[^>]+(?:property=["']og:image["']|name=["']twitter:image["'])[^>]+content=["']([^"']+)["']/i)
-                       || html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+(?:property=["']og:image["']|name=["']twitter:image["'])/i);
-          if (ogMatch?.[1]?.startsWith('http')) results.push(ogMatch[1]);
-
-          // 2. <img> tag'lerinden büyük görseller — küçük/logo/avatar atla
-          const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','social','button','arrow','loading','spinner','1x1','tracking','favicon'];
-          const imgRe = /<img[^>]+(?:src|data-src|data-lazy-src|data-original)=["']([^"']{20,})["'][^>]*>/gi;
-          let m;
-          while ((m = imgRe.exec(html)) !== null && results.length < 8) {
-            const src = m[1];
-            if (!src.startsWith('http')) continue;
-            if (!/.(jpe?g|png|webp)(?|$)/i.test(src) && !//image|/photo|/img|/foto/i.test(src)) continue;
-            if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
-            if (/[_-](d{1,2})x(d{1,2})[_.-]/.test(src)) continue; // çok küçük boyutlu
-            if (!results.includes(src)) results.push(src);
-          }
-
-          // 3. srcset'ten büyük resimler
-          const srcsetRe = /srcset=["']([^"']+)["']/gi;
-          while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
-            const parts = m[1].split(',').map(p => p.trim().split(/s+/)[0]);
-            for (const src of parts) {
-              if (!src.startsWith('http')) continue;
-              if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
-              if (!results.includes(src)) results.push(src);
-            }
-          }
-          done();
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      let res = null;
+      try {
+        res = await fetch(url, {
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml',
+          },
         });
-        res.on('error', () => { clearTimeout(timer); done(); });
-      });
-      req.on('error', () => { clearTimeout(timer); done(); });
-      req.setTimeout(7000, () => { req.destroy(); clearTimeout(timer); done(); });
-    });
+      } finally { clearTimeout(timer); }
+      if (!res || !res.ok) return [];
+      const html = await res.text().catch(() => '');
+      if (!html) return [];
+      const results = [];
+      const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','social','button','arrow','loading','spinner','1x1','tracking','favicon','placeholder','blank','default'];
+      // 1. og:image / twitter:image
+      const ogMatch = html.match(/<meta[^>]+(?:property=["']og:image["']|name=["']twitter:image(?::src)?["'])[^>]+content=["']([^"']{10,})["']/i)
+                   || html.match(/<meta[^>]+content=["']([^"']{10,})["'][^>]+(?:property=["']og:image["']|name=["']twitter:image)/i);
+      if (ogMatch?.[1]?.startsWith('http')) results.push(ogMatch[1]);
+      // 2. <img> tag'lerinden büyük görseller
+      const imgRe = /<img[^>]+(?:src|data-src|data-lazy-src|data-original)=["']([^"']{15,})["'][^>]*>/gi;
+      let m;
+      while ((m = imgRe.exec(html)) !== null && results.length < 8) {
+        const src = m[1];
+        if (!src.startsWith('http')) continue;
+        if (!/.(jpe?g|png|webp)(?|$)/i.test(src) && !//image|/photo|/img|/foto|/resim/i.test(src)) continue;
+        if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
+        const dims = src.match(/[_-](d+)x(d+)[_.-]/);
+        if (dims && (+dims[1] < 200 || +dims[2] < 150)) continue;
+        if (!results.includes(src)) results.push(src);
+      }
+      // 3. srcset'ten en büyük URL
+      const srcsetRe = /srcset=["']([^"']+)["']/gi;
+      while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
+        const parts = m[1].split(',').map(p => p.trim().split(/s+/));
+        let bestUrl = null, bestW = 0;
+        for (const [u, w] of parts) {
+          if (!u?.startsWith('http')) continue;
+          if (SKIP.some(s => u.toLowerCase().includes(s))) continue;
+          const wVal = w ? parseInt(w) : 0;
+          if (wVal > bestW) { bestW = wVal; bestUrl = u; }
+          else if (!bestUrl) bestUrl = u;
+        }
+        if (bestUrl && !results.includes(bestUrl)) results.push(bestUrl);
+      }
+      console.log(`📸 scrapePageImages: ${url.slice(0,60)} → ${results.length} görsel`);
+      return results.slice(0, 6);
+    } catch (e) {
+      console.log(`⚠️ scrapePageImages hata: ${e.message?.slice(0,60)}`);
+      return [];
+    }
   }
+  
 
   // ─── Makale HTML'inden YouTube Video ID'lerini Çıkar ─────────────────────────
 function extractYouTubeIdsFromHtml(html) {
