@@ -1178,7 +1178,7 @@ async function fetchSubjectImage(title) {
   return null;
 }
 
-// ─── Makale sayfasından görsel topla (fetch tabanlı) ─────────────────────────
+  // ─── Makale sayfasından görsel topla (fetch tabanlı) ─────────────────────────
   async function scrapePageImages(url) {
     if (!url || url.includes('news.google.com')) return [];
     try {
@@ -1199,43 +1199,46 @@ async function fetchSubjectImage(title) {
       if (!html) return [];
       const results = [];
       const SKIP = ['logo','icon','avatar','ads','pixel','banner','sponsor','reklam','widget','share','button','arrow','spinner','1x1','tracking','favicon','placeholder','blank','default','social'];
+      const isSkip = (s) => SKIP.some(k => s.toLowerCase().includes(k));
+      const isImg = (s) => /jpe?g|png|webp/.test(s) || /image|photo|img|foto|resim/.test(s);
       // og:image / twitter:image
-      const ogMatch = html.match(/<meta[^>]+(?:property=["']og:image["']|name=["']twitter:image[^"']*["'])[^>]+content=["']([^"']{10,})["']/i)
-                   || html.match(/<meta[^>]+content=["']([^"']{10,})["'][^>]+(?:property=["']og:image["']|name=["']twitter:image)/i);
-      if (ogMatch?.[1]?.startsWith('http')) results.push(ogMatch[1]);
-      // <img> tag'lerinden büyük görseller
-      const imgRe = /<img[^>]+(?:src|data-src|data-lazy-src|data-original)=["']([^"']{15,})["'][^>]*>/gi;
+      const ogM = html.match(/property=.og:image[^>]+content=.([^"' >]{10,})/)
+               || html.match(/name=.twitter:image[^>]+content=.([^"' >]{10,})/)
+               || html.match(/content=.([^"' >]{10,})[^>]+property=.og:image/);
+      if (ogM && ogM[1] && ogM[1].startsWith('http')) results.push(ogM[1]);
+      // <img> src / data-src
+      const imgRe = /(?:src|data-src|data-lazy-src|data-original)="(https?:[^"]{15,})"/g;
       let m;
       while ((m = imgRe.exec(html)) !== null && results.length < 8) {
         const src = m[1];
-        if (!src.startsWith('http')) continue;
-        if (!/.(jpe?g|png|webp)(?|$)/i.test(src) && !//image|/photo|/img|/foto|/resim/i.test(src)) continue;
-        if (SKIP.some(s => src.toLowerCase().includes(s))) continue;
-        const dims = src.match(/[_-](d+)x(d+)[_.-]/);
-        if (dims && (+dims[1] < 200 || +dims[2] < 150)) continue;
+        if (!isImg(src)) continue;
+        if (isSkip(src)) continue;
+        const dimMatch = src.match(/[_-]([0-9]+)x([0-9]+)[_.-]/);
+        if (dimMatch && (Number(dimMatch[1]) < 200 || Number(dimMatch[2]) < 150)) continue;
         if (!results.includes(src)) results.push(src);
       }
-      // srcset'ten en büyük URL
-      const srcsetRe = /srcset=["']([^"']+)["']/gi;
+      // srcset — en geniş URL
+      const srcsetRe = /srcset="([^"]+)"/g;
       while ((m = srcsetRe.exec(html)) !== null && results.length < 8) {
-        const parts = m[1].split(',').map(p => p.trim().split(/s+/));
-        let bestUrl = null, bestW = 0;
+        const parts = m[1].split(',').map(p => p.trim().split(' '));
+        let best = null, bestW = 0;
         for (const [u, w] of parts) {
-          if (!u?.startsWith('http')) continue;
-          if (SKIP.some(s => u.toLowerCase().includes(s))) continue;
-          const wVal = w ? parseInt(w) : 0;
-          if (wVal > bestW) { bestW = wVal; bestUrl = u; }
-          else if (!bestUrl) bestUrl = u;
+          if (!u || !u.startsWith('http')) continue;
+          if (isSkip(u)) continue;
+          const wv = w ? parseInt(w) : 0;
+          if (wv > bestW) { bestW = wv; best = u; }
+          else if (!best) best = u;
         }
-        if (bestUrl && !results.includes(bestUrl)) results.push(bestUrl);
+        if (best && !results.includes(best)) results.push(best);
       }
-      console.log(`📸 scrapePageImages: ${results.length} görsel — ${url.slice(0,50)}`);
+      console.log('scrapePageImages: ' + results.length + ' gorsel — ' + url.slice(0, 50));
       return results.slice(0, 5);
     } catch (e) {
-      console.log(`⚠️ scrapePageImages hata: ${e.message?.slice(0,50)}`);
+      console.log('scrapePageImages hata: ' + (e.message || '').slice(0, 50));
       return [];
     }
   }
+  
 
   // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
