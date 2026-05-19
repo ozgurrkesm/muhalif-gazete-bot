@@ -132,6 +132,7 @@ function loadSettings() {
 
 function saveSettings() {
   fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  dbSaveSettings();
 }
 
 let settings = loadSettings();
@@ -152,6 +153,7 @@ function loadUsers() {
 
 function saveUsers(users) {
   fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  Object.entries(users).forEach(([chatId, data]) => dbSaveUser(chatId, data));
 }
 
 let users = loadUsers();
@@ -572,12 +574,22 @@ function loadPublishedUrls() {
   return new Set();
 }
 
-function persistPublishedUrls() {
+async function persistPublishedUrls() {
   try {
     let arr = [...publishedUrls];
     if (arr.length > 5000) arr = arr.slice(arr.length - 3000);
     fs.writeFileSync(PUBLISHED_FILE, JSON.stringify(arr));
-  } catch {}
+    if (dbReady && pgClient && arr.length > 0) {
+      for (let i = 0; i < arr.length; i += 500) {
+        const chunk = arr.slice(i, i + 500);
+        const placeholders = chunk.map((_, idx) => `($${idx + 1})`).join(',');
+        await pgClient.query(
+          `INSERT INTO published_urls(url) VALUES ${placeholders} ON CONFLICT(url) DO NOTHING`,
+          chunk
+        );
+      }
+    }
+  } catch (e) { console.error('persistPublishedUrls hatası:', e.message); }
 }
 
 const publishedUrls = loadPublishedUrls();
@@ -602,14 +614,106 @@ function loadPublishedTitles() {
 
 const publishedTitlesSession = loadPublishedTitles();
 
-function persistPublishedTitles() {
+async function persistPublishedTitles() {
   try {
     let arr = [...publishedTitlesSession];
     if (arr.length > 3000) arr = arr.slice(arr.length - 2000);
     fs.writeFileSync(PUBLISHED_TITLES_FILE, JSON.stringify(arr));
-  } catch {}
+    if (dbReady && pgClient && arr.length > 0) {
+      for (let i = 0; i < arr.length; i += 500) {
+        const chunk = arr.slice(i, i + 500);
+        const placeholders = chunk.map((_, idx) => `($${idx + 1})`).join(',');
+        await pgClient.query(
+          `INSERT INTO published_titles(title) VALUES ${placeholders} ON CONFLICT(title) DO NOTHING`,
+          chunk
+        );
+      }
+    }
+  } catch (e) { console.error('persistPublishedTitles hatası:', e.message); }
 }
 setInterval(persistPublishedTitles, 30 * 1000);
+
+// ─── PostgreSQL Kalıcı Depolama ────────────────────────────────────────────────
+
+let pgClient = null;
+let dbReady = false;
+
+async function initDatabase() {
+  if (!process.env.DATABASE_URL) {
+    console.log('ℹ️ DATABASE_URL yok — dosya tabanlı depolama kullanılıyor');
+    return;
+  }
+  try {
+    const pgModule = await import('pg');
+    const { Client } = pgModule.default || pgModule;
+    pgClient = new Client({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    });
+    await pgClient.connect();
+    await pgClient.query(`
+      CREATE TABLE IF NOT EXISTS bot_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS bot_users (
+        chat_id TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS published_urls (
+        url TEXT PRIMARY KEY,
+        added_at TIMESTAMPTZ DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS published_titles (
+        title TEXT PRIMARY KEY,
+        added_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    dbReady = true;
+    console.log('✅ PostgreSQL bağlandı, tablolar hazır');
+
+    const [settingsRes, usersRes, urlsRes, titlesRes] = await Promise.all([
+      pgClient.query("SELECT value FROM bot_settings WHERE key = 'settings'"),
+      pgClient.query('SELECT chat_id, data FROM bot_users'),
+      pgClient.query('SELECT url FROM published_urls ORDER BY added_at DESC LIMIT 50000'),
+      pgClient.query('SELECT title FROM published_titles ORDER BY added_at DESC LIMIT 10000'),
+    ]);
+
+    if (settingsRes.rows.length > 0) {
+      const dbSettings = JSON.parse(settingsRes.rows[0].value);
+      Object.assign(settings, dbSettings);
+      console.log("✅ Ayarlar DB'den yüklendi");
+    }
+    usersRes.rows.forEach(r => { users[r.chat_id] = r.data; });
+    if (usersRes.rows.length) console.log(`✅ ${usersRes.rows.length} kullanıcı DB'den yüklendi`);
+    urlsRes.rows.forEach(r => publishedUrls.add(r.url));
+    if (urlsRes.rows.length) console.log(`✅ ${urlsRes.rows.length} yayınlanan URL DB'den yüklendi`);
+    titlesRes.rows.forEach(r => publishedTitlesSession.add(r.title));
+    if (titlesRes.rows.length) console.log(`✅ ${titlesRes.rows.length} başlık DB'den yüklendi`);
+  } catch (e) {
+    console.error('⚠️ PostgreSQL bağlanamadı, dosya sistemi kullanılıyor:', e.message);
+    pgClient = null;
+    dbReady = false;
+  }
+}
+
+function dbSaveSettings() {
+  if (!dbReady || !pgClient) return;
+  pgClient.query(
+    "INSERT INTO bot_settings(key,value,updated_at) VALUES('settings',$1,NOW()) ON CONFLICT(key) DO UPDATE SET value=$1,updated_at=NOW()",
+    [JSON.stringify(settings)]
+  ).catch(e => console.error('DB settings hatası:', e.message));
+}
+
+function dbSaveUser(chatId, data) {
+  if (!dbReady || !pgClient) return;
+  pgClient.query(
+    'INSERT INTO bot_users(chat_id,data,updated_at) VALUES($1,$2,NOW()) ON CONFLICT(chat_id) DO UPDATE SET data=$2,updated_at=NOW()',
+    [String(chatId), JSON.stringify(data)]
+  ).catch(e => console.error('DB user hatası:', e.message));
+}
 
 function normalizeTitle(title) {
   return (title || '').toLowerCase()
@@ -3932,6 +4036,13 @@ console.log(`⏱ Yayın aralığı: ${settings.intervalMinutes} dakika`);
 console.log(`📂 Aktif kategori: ${settings.activeCategory}`);
 console.log(`📰 Kaynak sayısı: ${RSS_FEEDS.length} (${RSS_FEEDS.filter(f=>f.type==='youtube').length} YouTube)`);
 console.log(`🔑 Admin şifresi ayarlı: ${ADMIN_PASSWORD !== 'admin2024' ? 'Evet' : 'Hayır (varsayılan)'}`);
+
+// PostgreSQL DB'yi başlat (async — bot başlatmayı bloke etmez)
+initDatabase().then(() => {
+  console.log('🗄️ Veritabanı başlatıldı');
+}).catch(e => {
+  console.error('🗄️ Veritabanı başlatma hatası:', e.message);
+});
 
 publishNextNews();
 resetInterval();
