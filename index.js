@@ -1093,6 +1093,15 @@ function isValidNewsItem(item, feed) {
     return false;
   }
 
+  // YouTube haberleri zaten video — medya kontrolü gerekmez
+  if (feed.type === 'youtube') return true;
+
+  // RSS haberlerde resim veya video ZORUNLU — ikisi de yoksa atla
+  if (!itemHasImage(item) && !itemHasVideo(item)) {
+    console.log(`⏭ Medyasız haber atlandı: ${title.slice(0, 50)}`);
+    return false;
+  }
+
   return true;
 }
 
