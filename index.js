@@ -735,6 +735,16 @@ function cleanArrows(text) {
     .trim();
 }
 
+// Caption'dan tüm URL/link'leri temizle (video/metin gönderiminde kullan)
+function stripLinks(text) {
+  if (!text) return text;
+  return text
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function detectCategory(title, description) {
   const text = `${title} ${description || ''}`.toLowerCase();
   const cats = [
@@ -759,27 +769,33 @@ async function summarizeNews(title, description, articleBody = null) {
   const rawText = (description || '').trim();
   const inputText = isGarbageText(rawText) ? '' : rawText;
   const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
-  const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 1500);
+  const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 2000);
 
-  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) return fullContent || inputText || null;
+  // AI yoksa: makale gövdesi varsa onu kullan, yoksa RSS açıklamasını
+  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+    // Önce makale gövdesini tercih et (daha zengin içerik)
+    const best = bodyText.length > 80 ? bodyText.slice(0, 400) : (inputText.length > 20 ? inputText.slice(0, 400) : null);
+    return best;
+  }
   try {
     const prompt = fullContent
-      ? `Sen muhalif ve eleştirel bir Türk gazetecisisin. Aşağıdaki haberi 2-3 cümleyle özetle ve kısa bir muhalefet perspektifli yorum ekle. Hükümetin ya da iktidarın söylemlerine eleştirel yaklaş, vatandaşa etkisini vurgula. Kaynak adı, tarih veya link ekleme. Sadece metin yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
-      : `Sen muhalif ve eleştirel bir Türk gazetecisisin. Aşağıdaki haber başlığını 1-2 cümleyle özetle ve iktidarın bu konudaki tutumuna kısa eleştirel bir bakış ekle. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
+      ? `Sen Türkçe yayın yapan bir haber kanalının editörüsün. Aşağıdaki haber içeriğini Türk okuyucuya yönelik 2-3 net cümleyle özetle. Ne olduğunu, kimin etkilendiğini ve önemini açıkla. Kaynak adı, tarih veya link ekleme. Yalnızca özeti yaz, başka hiçbir şey ekleme.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
+      : `Sen Türkçe yayın yapan bir haber kanalının editörüsün. Aşağıdaki haber başlığını 1-2 cümleyle açıkla. Ne olduğunu ve neden önemli olduğunu belirt. Kaynak adı ya da tarih ekleme.\n\nBaşlık: ${title}`;
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
-        model: 'gpt-5-nano',
-        max_completion_tokens: 200,
+        model: 'gpt-4o-mini',
+        max_tokens: 220,
         messages: [{ role: 'user', content: prompt }],
       }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('AI timeout')), 4000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('AI timeout')), 8000)),
     ]);
     const result = (response.choices[0]?.message?.content || '').trim();
-    if (!result || result.length < 10) return fullContent || inputText || null;
+    if (!result || result.length < 10) return fullContent.slice(0, 400) || inputText.slice(0, 400) || null;
     return result;
   } catch {
-    return fullContent || inputText || null;
+    const best = bodyText.length > 80 ? bodyText.slice(0, 400) : (inputText.length > 20 ? inputText.slice(0, 400) : null);
+    return best;
   }
 }
 
@@ -1904,8 +1920,8 @@ async function publishNowInstant() {
       const aiSummary = await summarizeNews(title, rawDesc || description);
       const catTag = detectCategory(title, rawDesc);
       const catEmoji = catTag ? `${catTag} ` : '';
-      let caption = `${prefix}${catEmoji}${title}`;
-      if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
+      let caption = stripLinks(`${prefix}${catEmoji}${title}`);
+      if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
       if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
       let sentType = 'none';
@@ -2044,11 +2060,9 @@ async function publishNextNews() {
     const aiSummary = await summarizeNews(title, rawDesc);
     const categoryTag = detectCategory(title, rawDesc);
 
-    // === FİX 1: Caption'a YouTube linkini ekle — kullanıcılar tıklayarak izleyebilsin ===
     const catEmoji = categoryTag ? `${categoryTag} ` : '';
-    let caption = `${prefix}${catEmoji}${title}`;
-    if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
-    // YouTube linki caption'a eklenmez (link gönderme yasak)
+    let caption = stripLinks(`${prefix}${catEmoji}${title}`);
+    if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
     if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
     const replyToId = findRelatedMessageId(title);
@@ -2172,9 +2186,9 @@ async function publishNextNews() {
   const categoryTag = detectCategory(title, bestDesc);
 
   const catEmoji2 = categoryTag ? `${categoryTag} ` : '';
-  let caption = `${prefix}${catEmoji2}${title}`;
+  let caption = stripLinks(`${prefix}${catEmoji2}${title}`);
   if (aiSummary && aiSummary.length > 5) {
-    caption += `\n\n${cleanArrows(aiSummary)}`;
+    caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
   }
 
   if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
@@ -2574,8 +2588,8 @@ async function checkBreakingNews() {
         const categoryTag = detectCategory(title, rawDesc);
         const catEmoji = categoryTag ? `${categoryTag} ` : '';
 
-        let caption = `🚨 SON DAKİKA\n\n${catEmoji}${title}`;
-        if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(aiSummary)}`;
+        let caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`);
+        if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
         if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
         let sentMsg = null;
