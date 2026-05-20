@@ -2037,19 +2037,10 @@ function getActiveFeed() {
     if (pool.length === 0) pool = RSS_FEEDS;
   }
 
-  // Video oranı düşükse önce direct/google feedlerden video çekmeyi dene
-  // (publishNextNews içinde fetchArticleHtmlAndExtractVideo ile web sitelerinden video çekilir)
-  // YouTube'u sadece kategori 'video' veya 'hepsi' olduğunda rotasyona dahil et
+  // Video oranı düşükse SADECE mevcut pool içindeki feedlerden video dene
+  // KATEGORİ DEĞİŞTİRME — seçili kategoride (örn. spor) kal, video kategorisine geçme
   const needed = getNeededMediaType();
   if (needed === 'video') {
-    // Önce video kategorisindeki direct/google feedleri dene
-    const videoNewsFeeds = pool.filter((f) => f.category === 'video' && f.type !== 'youtube');
-    if (videoNewsFeeds.length > 0) {
-      const idx = currentFeedIndex % videoNewsFeeds.length;
-      currentFeedIndex++;
-      return videoNewsFeeds[idx];
-    }
-    // Sonra herhangi bir direct/google feedi dene (web sayfasında video olabilir)
     const nonYtFeeds = pool.filter((f) => f.type !== 'youtube');
     if (nonYtFeeds.length > 0) {
       const idx = currentFeedIndex % nonYtFeeds.length;
