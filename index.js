@@ -1006,9 +1006,7 @@ async function summarizeNewsDetailed(title, description, articleBody = null) {
   const rawText = (description || '').trim();
   const inputText = isGarbageText(rawText) ? '' : rawText;
   const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
-  const fullContent = [inputText, bodyText].filter(Boolean).join('
-
-').slice(0, 3000);
+  const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 3000);
 
   if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
     const best = bodyText.length > 80 ? bodyText.slice(0, 800) : (inputText.length > 20 ? inputText.slice(0, 800) : null);
@@ -3704,23 +3702,16 @@ bot.onText(/\/filtrelerim/, (msg) => {
   }
 });
 
-
 // ─── /ara Komutu: Konuya göre web'den haber ara — liste seç, detaylı yayınla ─
 const pendingAraResults = new Map(); // chatId -> haber listesi
 
-bot.onText(//ara(?:s+(.+))?/, async (msg, match) => {
+bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const konu = (match[1] || '').trim();
 
   if (!konu) {
     await bot.sendMessage(chatId,
-      '🔍 Kullanım:
-/ara <konu>
-
-Örnekler:
-/ara deprem
-/ara ekonomi
-/ara galatasaray'
+      '🔍 Kullanım:\n/ara <konu>\n\nÖrnekler:\n/ara deprem\n/ara ekonomi\n/ara galatasaray'
     );
     return;
   }
