@@ -650,11 +650,22 @@ async function initDatabase() {
   try {
     const pgModule = await import('pg');
     const { Client } = pgModule.default || pgModule;
-    pgClient = new Client({
-      connectionString: process.env.DATABASE_URL,
-      ssl: { rejectUnauthorized: false },
-    });
-    await pgClient.connect();
+    // Önce SSL ile dene, olmazsa SSL'siz bağlan (Railway iç network SSL desteklemez)
+    try {
+      pgClient = new Client({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      });
+      await pgClient.connect();
+    } catch (sslErr) {
+      if (sslErr.message.includes('SSL') || sslErr.message.includes('ssl')) {
+        console.log('ℹ️ SSL desteklenmiyor, SSL'siz bağlanılıyor...');
+        pgClient = new Client({ connectionString: process.env.DATABASE_URL });
+        await pgClient.connect();
+      } else {
+        throw sslErr;
+      }
+    }
     await pgClient.query(`
       CREATE TABLE IF NOT EXISTS bot_settings (
         key TEXT PRIMARY KEY,
