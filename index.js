@@ -420,6 +420,22 @@ const CATEGORY_LABELS = {
 };
 
 const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
+  // ── İçerik bazlı kategori eşleşme kontrolü ──────────────────────────────────
+  function matchesActiveCategory(title, description, category) {
+    if (!category || category === 'hepsi') return true;
+    const text = `${title || ''} ${description || ''}`.toLowerCase();
+    const CATEGORY_KEYWORDS = {
+      spor: ['futbol','maç ','maçı','gol','transfer','fenerbahçe','galatasaray','beşiktaş','trabzonspor','milli takım','süper lig','basketbol','tenis','formula','olimpiyat','şampiyon','teknik direktör','taraftar',' lig ',' lig,','kulüp','atlet','maraton','yüzme','voleybol','spor','stadyum','deplasman','forma','golcü','kaleci','defans','hücum','turnuva','kupası','derbi'],
+      ekonomi: ['dolar','euro','faiz','enflasyon','tcmb','borsa','bist','merkez bankası','ihracat','ithalat','büyüme','bütçe','vergi','işsizlik','piyasa','hisse','altın','döviz','kredi','hazine','ekonomi','gdp','gsyih','ticaret'],
+      dunya: ['ukrayna','rusya','abd ','nato','birleşmiş milletler','bm ','suriye','gazze','israil','filistin','irak','iran','çin','almanya','fransa','ingiltere','putin','biden','trump','savaş','uluslararası','küresel','dış politika'],
+      teknoloji: ['yapay zeka','ai ','teknoloji','yazılım','donanım','uygulama','sosyal medya','twitter','instagram','google','apple','microsoft','blockchain','kripto','iphone','android'],
+      politika: ['cumhurbaşkanı','erdoğan','meclis','hükümet','bakan','chp','akp','mhp','hdp','dip','parti ','muhalefet','seçim','milletvekili','tbmm','anayasa','siyasi','muhalif','sandık','koalisy'],
+    };
+    const words = CATEGORY_KEYWORDS[category];
+    if (!words) return true;
+    return words.some(w => text.includes(w));
+  }
+  
 const BREAKING_INTERVAL_MS = 2 * 60 * 1000; // 2 dakika
 
   // ─── Son Dakika Hızlı Tarama ─────────────────────────────────────────────────
@@ -2169,6 +2185,8 @@ async function publishNowInstant() {
         const t = cleanTitle(a.title);
         if (t.length < 10) return false;
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
+        // İçerik bazlı kategori filtresi — yanlış kategorideki haberleri atla
+        if (!matchesActiveCategory(a.title, a.description || a.summary || '', cat)) { return false; }
         return true;
       })
       .slice(0, 10);
@@ -2375,6 +2393,15 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
   if (!validItems || validItems.length === 0) {
     console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
     return;
+  }
+
+  // İçerik bazlı kategori filtresi
+  if (settings.activeCategory && settings.activeCategory !== 'hepsi') {
+    validItems = validItems.filter(a => matchesActiveCategory(a.title, a.description || a.summary || '', settings.activeCategory));
+    if (validItems.length === 0) {
+      console.log(`ℹ️ Kategori içerik filtresi sonrası uygun haber kalmadı (${settings.activeCategory}).`);
+      return;
+    }
   }
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
