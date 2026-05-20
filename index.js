@@ -1001,6 +1001,46 @@ async function summarizeNews(title, description, articleBody = null) {
   }
 }
 
+// ─── Detaylı AI Özetleme (/ara için) ────────────────────────────────────────
+async function summarizeNewsDetailed(title, description, articleBody = null) {
+  const rawText = (description || '').trim();
+  const inputText = isGarbageText(rawText) ? '' : rawText;
+  const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
+  const fullContent = [inputText, bodyText].filter(Boolean).join('
+
+').slice(0, 3000);
+
+  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+    const best = bodyText.length > 80 ? bodyText.slice(0, 800) : (inputText.length > 20 ? inputText.slice(0, 800) : null);
+    return best;
+  }
+  try {
+    const prompt = fullContent
+      ? `Sen Türkçe bir haber kanalının deneyimli editörüsün. Aşağıdaki haberi okuyuculara kapsamlı ve açıklayıcı biçimde anlat. 4-6 cümle yaz. Şunlara dikkat et: başlıkta yazanı kelimesi kelimesine tekrarlama; kim, ne, nerede, ne zaman, neden ve nasıl sorularını yanıtla; gerçek rakamlar, kararlar, alıntılar varsa mutlaka yaz; olayın arka planını ve önemini açıkla. Kaynak adı, tarih, link EKLEME. Sadece özeti yaz, başka hiçbir şey ekleme.
+
+Başlık: ${title}
+İçerik: ${fullContent}`
+      : `Sen Türkçe bir haber kanalının deneyimli editörüsün. Aşağıdaki haber başlığını oku. Konuyu 3-4 cümleyle arka plan bağlamı ve önemini de içerecek şekilde açıkla. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih, link ekleme. Sadece açıklamayı yaz.
+
+Başlık: ${title}`;
+
+    const response = await Promise.race([
+      aiClient.chat.completions.create({
+        model: 'gpt-4o-mini',
+        max_tokens: 500,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('AI timeout')), 10000)),
+    ]);
+    const result = (response.choices[0]?.message?.content || '').trim();
+    if (!result || result.length < 10) return fullContent.slice(0, 800) || null;
+    return result;
+  } catch {
+    const best = bodyText.length > 80 ? bodyText.slice(0, 800) : (inputText.length > 20 ? inputText.slice(0, 800) : null);
+    return best;
+  }
+}
+
 // ─── DuckDuckGo Görsel Arama ──────────────────────────────────────────────────
 
 function fetchDuckDuckGoImage(query) {
@@ -3330,6 +3370,76 @@ bot.on('callback_query', async (query) => {
   // Her işlemi try-catch içinde çalıştır; hata olursa yine de query'yi yanıtla
   try {
 
+  // ─── /ara Haber Seçimi ────────────────────────────────────────────────────
+  if (data === 'ara_cancel') {
+    pendingAraResults.delete(chatId);
+    await bot.answerCallbackQuery(query.id, { text: '❌ İptal edildi' });
+    await bot.deleteMessage(chatId, msgId).catch(() => {});
+    return;
+  }
+
+  if (data.startsWith('ara_select_')) {
+    const idx = parseInt(data.replace('ara_select_', ''));
+    const items = pendingAraResults.get(chatId);
+    if (!items || !items[idx]) {
+      await bot.answerCallbackQuery(query.id, { text: '❌ Haber bulunamadı, /ara ile tekrar dene.' });
+      return;
+    }
+    pendingAraResults.delete(chatId);
+
+    const item = items[idx];
+    const title = cleanTitle(item.title || '');
+    const link = item.link || '';
+
+    await bot.answerCallbackQuery(query.id, { text: '⏳ Haber hazırlanıyor...' });
+    await bot.editMessageText(`⏳ Haber hazırlanıyor: ${title.slice(0, 60)}...`, {
+      chat_id: chatId, message_id: msgId
+    }).catch(() => {});
+
+    // Haber sayfasından tam içeriği çek (og:image + articleBody)
+    const ogMeta = await fetchOgMeta(link).catch(() => ({ image: null, description: null, articleBody: null }));
+
+    // Full HD resim
+    let imageUrl = ogMeta.image || null;
+    if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
+
+    // Detaylı AI özeti (link yok, açıklayıcı)
+    const description = ogMeta.description || item.contentSnippet || item.summary || '';
+    const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
+
+    const categoryTag = detectCategory(title, description);
+    const catE = categoryTag ? `${categoryTag} ` : '';
+
+    let caption = `${catE}*${title}*`;
+    if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
+    caption = caption.slice(0, 1024);
+
+    // Kanala gönder
+    let sent = false;
+    if (imageUrl) {
+      try {
+        const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption, parse_mode: 'Markdown' });
+        registerSentMessage(sentMsg.message_id, title);
+        sent = true;
+      } catch {}
+    }
+    if (!sent) {
+      const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: true });
+      registerSentMessage(sentMsg.message_id, title);
+      sent = true;
+    }
+
+    if (sent) {
+      publishedUrls.add(link);
+      persistPublishedUrls();
+      await bot.editMessageText(`✅ Haber kanala yayınlandı!\n\n📰 ${title}`, {
+        chat_id: chatId, message_id: msgId
+      }).catch(() => {});
+    }
+    return;
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   if (data.startsWith('set_daterange_')) {
     const hours = parseInt(data.replace('set_daterange_', ''));
     settings.maxAgeHours = hours;
@@ -3595,15 +3705,22 @@ bot.onText(/\/filtrelerim/, (msg) => {
 });
 
 
-// ─── /ara Komutu: Konuya göre web'den haber ara ve kanala yayınla ─────────────
+// ─── /ara Komutu: Konuya göre web'den haber ara — liste seç, detaylı yayınla ─
+const pendingAraResults = new Map(); // chatId -> haber listesi
 
-bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
+bot.onText(//ara(?:s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
   const konu = (match[1] || '').trim();
 
   if (!konu) {
     await bot.sendMessage(chatId,
-      '🔍 Kullanım:\n/ara <konu>\n\nÖrnekler:\n/ara deprem\n/ara ekonomi\n/ara galatasaray'
+      '🔍 Kullanım:
+/ara <konu>
+
+Örnekler:
+/ara deprem
+/ara ekonomi
+/ara galatasaray'
     );
     return;
   }
@@ -3611,69 +3728,34 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
   await bot.sendMessage(chatId, `🔍 "${konu}" aranıyor...`);
 
   try {
-    // Google News RSS ile ara
     const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(konu)}&hl=tr&gl=TR&ceid=TR:tr`;
     const feed = await parser.parseURL(searchUrl);
-    const items = (feed.items || []).filter(it => {
-      const title = it.title || '';
-      return title.length > 10 && !BLOCKED_TITLE_PATTERNS.some(p => p.test(title));
-    });
+    const items = (feed.items || [])
+      .filter(it => {
+        const title = it.title || '';
+        return title.length > 10 && !BLOCKED_TITLE_PATTERNS.some(p => p.test(title));
+      })
+      .slice(0, 5);
 
     if (items.length === 0) {
       await bot.sendMessage(chatId, `❌ "${konu}" için haber bulunamadı.`);
       return;
     }
 
-    // Yayınlanmamış ilk haberi bul
-    const item = items.find(it => !publishedUrls.has(it.link)) || items[0];
-    const title = cleanTitle(item.title || '');
-    const link = item.link || '';
-    const description = item.contentSnippet || item.summary || '';
+    pendingAraResults.set(String(chatId), items);
 
-    await bot.sendMessage(chatId, `📰 Haber bulundu: ${title.slice(0, 80)}...\n⬆️ Kanala gönderiliyor...`);
+    const keyboard = items.map((it, i) => [{
+      text: `${i + 1}. ${cleanTitle(it.title || '').slice(0, 58)}`,
+      callback_data: `ara_select_${i}`
+    }]);
+    keyboard.push([{ text: '❌ İptal', callback_data: 'ara_cancel' }]);
 
-    // Görseli çek — Google News RSS thumbnail'ları düşük kaliteli (144p) olduğu için atlanıyor.
-    // Önce haberin kendi sayfasından og:image (full HD), fallback DuckDuckGo görseli (min 1280px).
-    let imageUrl = await fetchOgImage(link);
-    if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
-
-    // AI özeti
-    const aiSummary = await summarizeNews(title, description).catch(() => null);
-    const categoryTag = detectCategory(title, description);
-    const catE = categoryTag ? `${categoryTag} ` : '';
-
-    let caption = `${catE}*${title}*`;
-    if (aiSummary) caption += `\n\n${cleanArrows(aiSummary)}`;
-    caption += `\n\n🔗 [Habere git](${link})`;
-    caption = caption.slice(0, 1024);
-
-    // Kanala gönder
-    let sent = false;
-    if (imageUrl) {
-      try {
-        const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, {
-          caption,
-          parse_mode: 'Markdown',
-        });
-        registerSentMessage(sentMsg.message_id, title);
-        sent = true;
-      } catch {}
-    }
-
-    if (!sent) {
-      const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: false,
-      });
-      registerSentMessage(sentMsg.message_id, title);
-      sent = true;
-    }
-
-    if (sent) {
-      publishedUrls.add(link);
-      persistPublishedUrls();
-      await bot.sendMessage(chatId, `✅ "${konu}" haberi kanala yayınlandı!`);
-    }
+    await bot.sendMessage(
+      chatId,
+      `📋 *"${konu}"* için ${items.length} haber bulundu.
+Hangisini kanala yayınlamak istiyorsun?`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+    );
 
   } catch (err) {
     console.error('❌ /ara hatası:', err.message);
