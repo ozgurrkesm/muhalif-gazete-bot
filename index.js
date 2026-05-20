@@ -2563,7 +2563,6 @@ let publishingInProgress = false;
           sentType = 'skip';
           console.log('⏭ Görsel bulunamadı — haber atlandı');
         }
-      }
     }
   } catch {}
   return null;
