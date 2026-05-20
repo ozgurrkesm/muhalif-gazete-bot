@@ -2056,35 +2056,42 @@ function getActiveFeed() {
   return orderedPool[idx];
 }
 
+async function fetchFeedXml(url, maxRedirects = 5) {
+  let currentUrl = url;
+  for (let hop = 0; hop < maxRedirects; hop++) {
+    const result = await new Promise((resolve, reject) => {
+      const mod = currentUrl.startsWith('https') ? https : http;
+      const req = mod.get(currentUrl, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0', Accept: 'application/rss+xml,application/xml,text/xml,*/*' },
+        rejectUnauthorized: false,
+      }, (resp) => {
+        if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
+          resp.destroy();
+          const loc = resp.headers.location;
+          resolve({ redirect: loc.startsWith('http') ? loc : new URL(loc, currentUrl).href });
+        } else if (resp.statusCode >= 200 && resp.statusCode < 300) {
+          const chunks = [];
+          resp.on('data', c => chunks.push(c));
+          resp.on('end', () => resolve({ xml: Buffer.concat(chunks).toString('utf8') }));
+          resp.on('error', reject);
+        } else {
+          resp.destroy();
+          reject(new Error(`HTTP ${resp.statusCode}`));
+        }
+      });
+      req.on('error', reject);
+      req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+    });
+    if (result.redirect) { currentUrl = result.redirect; continue; }
+    return result.xml;
+  }
+  throw new Error('Too many redirects');
+}
+
 async function fetchFeed(feed) {
   try {
-    // rss-parser bazı 301/302 redirect'leri takip etmez — elle takip et
-    // rejectUnauthorized: false → süresi geçmiş SSL sertifikalarını da kabul et
-    let url = feed.url;
-    for (let i = 0; i < 5; i++) {
-      const r = await new Promise((res) => {
-        const mod = url.startsWith('https') ? https : http;
-        const req = mod.get(url, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0' },
-          rejectUnauthorized: false,
-        }, (resp) => {
-          if (resp.statusCode >= 300 && resp.statusCode < 400 && resp.headers.location) {
-            resp.destroy();
-            const loc = resp.headers.location;
-            res({ redirect: loc.startsWith('http') ? loc : new URL(loc, url).href });
-          } else {
-            resp.destroy();
-            res({ ok: true });
-          }
-        });
-        req.on('error', (e) => { console.error(`❌ fetchFeed redirect-check hatası (${feed.source}): ${e.message}`); res({ ok: true }); });
-        req.setTimeout(8000, () => { req.destroy(); res({ ok: true }); });
-      });
-      if (r.redirect) { console.log(`↪ ${feed.source} yönlendirme: ${r.redirect.slice(0,80)}`); url = r.redirect; } else { break; }
-    }
-    console.log(`🌐 ${feed.source} parseURL: ${url.slice(0,80)}`);
-    const result = await parser.parseURL(url, { rejectUnauthorized: false });
-    console.log(`📥 ${feed.source} sonuç: ${result?.items?.length ?? 'null'} item`);
+    const xml = await fetchFeedXml(feed.url);
+    const result = await parser.parseString(xml);
     return result.items || [];
   } catch (err) {
     console.error(`❌ RSS hatası (${feed.source}): ${err.message}`);
