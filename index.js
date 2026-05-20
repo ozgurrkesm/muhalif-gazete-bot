@@ -2313,7 +2313,12 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     publishingInProgress = true;
     publishingStartTime = Date.now();
     try {
-      await _publishNextNewsInner();
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('publishNextNews 4dk timeout')), 4 * 60 * 1000)
+      );
+      await Promise.race([_publishNextNewsInner(), timeout]);
+    } catch (e) {
+      console.error('⚠️ publishNextNews hata/timeout:', e.message);
     } finally {
       publishingInProgress = false;
     }
