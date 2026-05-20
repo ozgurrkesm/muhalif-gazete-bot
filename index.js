@@ -2077,12 +2077,14 @@ async function fetchFeed(feed) {
             res({ ok: true });
           }
         });
-        req.on('error', () => res({ ok: true }));
+        req.on('error', (e) => { console.error(`❌ fetchFeed redirect-check hatası (${feed.source}): ${e.message}`); res({ ok: true }); });
         req.setTimeout(8000, () => { req.destroy(); res({ ok: true }); });
       });
-      if (r.redirect) { url = r.redirect; } else { break; }
+      if (r.redirect) { console.log(`↪ ${feed.source} yönlendirme: ${r.redirect.slice(0,80)}`); url = r.redirect; } else { break; }
     }
+    console.log(`🌐 ${feed.source} parseURL: ${url.slice(0,80)}`);
     const result = await parser.parseURL(url, { rejectUnauthorized: false });
+    console.log(`📥 ${feed.source} sonuç: ${result?.items?.length ?? 'null'} item`);
     return result.items || [];
   } catch (err) {
     console.error(`❌ RSS hatası (${feed.source}): ${err.message}`);
