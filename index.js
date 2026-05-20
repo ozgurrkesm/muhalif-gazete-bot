@@ -2297,10 +2297,21 @@ async function publishNowInstant() {
 }
 
 let publishingInProgress = false;
+let publishingStartTime = 0;
+const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırla
 
   async function publishNextNews() {
-    if (publishingInProgress) { console.log('⏭ Önceki yayın döngüsü devam ediyor, atlanıyor.'); return; }
+    if (publishingInProgress) {
+      if (Date.now() - publishingStartTime > PUBLISHING_TIMEOUT_MS) {
+        console.log('⚠️ Yayın döngüsü 5 dakikayı aştı, zorla sıfırlanıyor.');
+        publishingInProgress = false;
+      } else {
+        console.log('⏭ Önceki yayın döngüsü devam ediyor, atlanıyor.');
+        return;
+      }
+    }
     publishingInProgress = true;
+    publishingStartTime = Date.now();
     try {
       await _publishNextNewsInner();
     } finally {
