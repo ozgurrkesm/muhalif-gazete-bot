@@ -2056,6 +2056,14 @@ function getActiveFeed() {
   return orderedPool[idx];
 }
 
+// Aktif kategorinin feed listesini döndür (döngü sayacı için)
+function getActivePool() {
+  const cat = settings.activeCategory;
+  if (cat === 'hepsi') return RSS_FEEDS;
+  const pool = RSS_FEEDS.filter((f) => f.category === cat);
+  return pool.length > 0 ? pool : RSS_FEEDS;
+}
+
 async function fetchFeedXml(url, maxRedirects = 5) {
   let currentUrl = url;
   for (let hop = 0; hop < maxRedirects; hop++) {
@@ -2333,20 +2341,25 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     return;
   }
 
-  // Bir feed boş gelirse sıradakine geç — tüm feedleri dolaşana kadar dene (max 8)
+  // Bir feed boş gelirse sıradakine geç — aktif kategorideki tüm feedleri dene
   const needed = getNeededMediaType();
   let feed, items, validItems;
   const triedFeeds = new Set();
   let attempts = 0;
-  const maxAttempts = RSS_FEEDS.length; // Tüm feedleri dene, 8 ile sınırlama
+  // Aktif kategorinin pool boyutunu kullan — sadece o kategorinin feedleri denenir
+  const activePool = getActivePool();
+  const maxAttempts = activePool.length;
 
-  while (attempts < maxAttempts) {
+  while (triedFeeds.size < maxAttempts) {
     feed = getActiveFeed();
     attempts++;
-    if (triedFeeds.has(feed.url)) continue;
+    if (triedFeeds.has(feed.url)) {
+      if (attempts > maxAttempts * 3) break; // sonsuz döngü koruması
+      continue;
+    }
     triedFeeds.add(feed.url);
 
-    console.log(`📡 ${feed.label} çekiliyor... (deneme ${attempts}/${maxAttempts})`);
+    console.log(`📡 ${feed.label} çekiliyor... (${triedFeeds.size}/${maxAttempts}, kategori: ${settings.activeCategory})`);
     items = await fetchFeed(feed);
     const withUrl = items.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
@@ -2357,7 +2370,6 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     if (validItems.length > 0) break;
     console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
   }
-
   if (!validItems || validItems.length === 0) {
     console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
     return;
