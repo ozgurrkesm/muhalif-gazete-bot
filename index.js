@@ -659,7 +659,7 @@ async function initDatabase() {
       await pgClient.connect();
     } catch (sslErr) {
       if (sslErr.message.includes('SSL') || sslErr.message.includes('ssl')) {
-        console.log('ℹ️ SSL desteklenmiyor, SSL'siz bağlanılıyor...');
+        console.log(`ℹ️ SSL desteklenmiyor, SSL'siz bağlanılıyor...`);
         pgClient = new Client({ connectionString: process.env.DATABASE_URL });
         await pgClient.connect();
       } else {
