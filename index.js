@@ -2198,18 +2198,18 @@ async function publishNowInstant() {
       const sourceName = feed.source || '';
       tgLog(`📌 Deneniyor: "${title.slice(0, 80)}"`);
 
-      const aiSummary = await summarizeNews(title, rawDesc || description);
+      // caption ogMeta çekildikten sonra oluşturulur (rawDesc genelde boş gelir)
       const catTag = detectCategory(title, rawDesc);
       const catEmoji = catTag ? `${catTag} ` : '';
-      let caption = stripLinks(`${prefix}${catEmoji}${title}`);
-      if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
-      if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+      let caption = ''; // aşağıda doldurulur
 
       let sentType = 'none';
 
       try {
         // ═══ YouTube feed ════════════════════════════════════════════════
         if (feed.type === 'youtube') {
+          // YouTube için caption hemen oluştur
+          { const aiS = await summarizeNews(title, rawDesc || description); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
           console.log(`⚡ [ŞY] YouTube: ${url.slice(0, 60)}`);
           const ok = await sendYouTubeVideoSmart(CHANNEL_ID, url, caption);
           if (ok) {
@@ -2247,6 +2247,8 @@ async function publishNowInstant() {
         tgLog(`🖼 Görsel aranıyor...`);
         const ogMeta = await fetchOgMeta(realUrl);
         const rssMedia = extractMedia(item);
+        // Caption ogMeta sonrası oluştur — description artık dolu
+        { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
         if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
         let ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
         const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
@@ -2974,13 +2976,9 @@ async function checkBreakingNews() {
 
         const { title, rawDesc } = buildItemMeta(item, feed);
         const sourceName = feed.source || '';
-        const aiSummary = await summarizeNews(title, rawDesc);
         const categoryTag = detectCategory(title, rawDesc);
         const catEmoji = categoryTag ? `${categoryTag} ` : '';
-
-        let caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`);
-        if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
-        if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
+        let caption = ''; // ogMeta sonrası doldurulur
 
         let sentMsg = null;
         let sentType = 'text';
@@ -2990,6 +2988,9 @@ async function checkBreakingNews() {
           if (url.includes('news.google.com')) {
             realUrl = (await resolveGoogleNewsUrl(url)) || url;
           }
+
+          // ogMeta çek ve caption oluştur
+          { const _og = await fetchOgMeta(realUrl).catch(() => ({})); const bestD = _og.description || rawDesc || ''; const aiS = await summarizeNews(title, bestD, _og.articleBody || null); caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
 
           // Haber sitesinden video
           if (!realUrl.includes('news.google.com')) {
