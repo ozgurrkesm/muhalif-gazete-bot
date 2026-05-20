@@ -1029,7 +1029,7 @@ function fetchDuckDuckGoImage(query) {
               try {
                 const json = JSON.parse(data);
                 const results = json?.results || [];
-                const best = results.find((r) => r.image && (r.width || 0) >= 800) || results[0];
+                const best = results.find((r) => r.image && (r.width || 0) >= 1280) || results.find((r) => r.image && (r.width || 0) >= 800) || results[0];
                 done(best?.image || null);
               } catch { done(null); }
             });
@@ -3632,10 +3632,10 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
 
     await bot.sendMessage(chatId, `📰 Haber bulundu: ${title.slice(0, 80)}...\n⬆️ Kanala gönderiliyor...`);
 
-    // Görseli çek
-    let imageUrl = extractMedia(item)?.url || null;
-    if (!imageUrl) imageUrl = await fetchOgImage(link);
-    if (!imageUrl) imageUrl = await fetchSubjectImage(title);
+    // Görseli çek — Google News RSS thumbnail'ları düşük kaliteli (144p) olduğu için atlanıyor.
+    // Önce haberin kendi sayfasından og:image (full HD), fallback DuckDuckGo görseli (min 1280px).
+    let imageUrl = await fetchOgImage(link);
+    if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
 
     // AI özeti
     const aiSummary = await summarizeNews(title, description).catch(() => null);
