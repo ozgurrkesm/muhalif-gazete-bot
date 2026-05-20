@@ -600,6 +600,8 @@ setInterval(persistPublishedUrls, 30 * 1000);
 // Böylece publishedUrls'teki eski kayıtlar son dakikayı engellemez
 const breakingPublishedUrls = new Set();
 let breakingNewsInterval = null;
+let lastBreakingNewsTime = 0;
+const BREAKING_MIN_GAP_MS = 5 * 60 * 1000; // 5 dakika min aralık
 // Her 2 saatte bir temizle (çok büyümemesi için)
 setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
 
@@ -679,8 +681,8 @@ async function initDatabase() {
     const [settingsRes, usersRes, urlsRes, titlesRes] = await Promise.all([
       pgClient.query("SELECT value FROM bot_settings WHERE key = 'settings'"),
       pgClient.query('SELECT chat_id, data FROM bot_users'),
-      pgClient.query('SELECT url FROM published_urls ORDER BY added_at DESC LIMIT 50000'),
-      pgClient.query('SELECT title FROM published_titles ORDER BY added_at DESC LIMIT 10000'),
+      pgClient.query(`SELECT url FROM published_urls WHERE added_at > NOW() - INTERVAL '3 hours' ORDER BY added_at DESC`),
+      pgClient.query(`SELECT title FROM published_titles WHERE added_at > NOW() - INTERVAL '3 hours' ORDER BY added_at DESC`),
     ]);
 
     if (settingsRes.rows.length > 0) {
