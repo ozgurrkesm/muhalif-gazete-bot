@@ -2438,7 +2438,10 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     // Google News URL'lerini önce decode et
     let candidateUrl = rawCandidateUrl;
     if (rawCandidateUrl.includes('news.google.com')) {
-      candidateUrl = (await resolveGoogleNewsUrl(rawCandidateUrl)) || rawCandidateUrl;
+      candidateUrl = (await Promise.race([
+        resolveGoogleNewsUrl(rawCandidateUrl),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('resolveGoogleNews 15s timeout')), 15000))
+      ]).catch(() => null)) || rawCandidateUrl;
       if (candidateUrl !== rawCandidateUrl) {
         console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
         // Çözülmüş URL'yi de hemen engelle (aynı haber farklı wrapper ile gelmesin)
@@ -2449,14 +2452,20 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
 
-    // Web sayfasından video çıkar
+    // Web sayfasından video çıkar (30s timeout)
     if (!media.url || media.type !== 'video') {
-      const webVid = await fetchArticleHtmlAndExtractVideo(candidateUrl);
+      const webVid = await Promise.race([
+        fetchArticleHtmlAndExtractVideo(candidateUrl),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('fetchArticle 30s timeout')), 30000))
+      ]).catch(() => null);
       if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Web video: ${webVid.slice(0, 60)}`); }
     }
 
-    // OG meta çek (görsel + açıklama)
-    const ogMeta = await fetchOgMeta(candidateUrl);
+    // OG meta çek (görsel + açıklama) (25s timeout)
+    const ogMeta = await Promise.race([
+      fetchOgMeta(candidateUrl),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('fetchOgMeta 25s timeout')), 25000))
+    ]).catch(() => ({}));
     if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
     if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
 
