@@ -2323,10 +2323,11 @@ let publishingInProgress = false;
 
     console.log(`📡 ${feed.label} çekiliyor... (deneme ${attempts}/${maxAttempts})`);
     items = await fetchFeed(feed);
-    validItems = sortByNeededMedia(
-      items.filter((a) => (a.link || a.guid) && !publishedUrls.has(a.link || a.guid) && isValidNewsItem(a, feed)),
-      needed
-    );
+    const withUrl = items.filter((a) => a.link || a.guid);
+    const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
+    const valid = notPublished.filter((a) => isValidNewsItem(a, feed));
+    console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
+    validItems = sortByNeededMedia(valid, needed);
 
     if (validItems.length > 0) break;
     console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
