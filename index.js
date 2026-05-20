@@ -2185,8 +2185,6 @@ async function publishNowInstant() {
         const t = cleanTitle(a.title);
         if (t.length < 10) return false;
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
-        // İçerik bazlı kategori filtresi — yanlış kategorideki haberleri atla
-        if (!matchesActiveCategory(a.title, a.description || a.summary || '', cat)) { return false; }
         return true;
       })
       .slice(0, 10);
@@ -2395,14 +2393,6 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     return;
   }
 
-  // İçerik bazlı kategori filtresi
-  if (settings.activeCategory && settings.activeCategory !== 'hepsi') {
-    validItems = validItems.filter(a => matchesActiveCategory(a.title, a.description || a.summary || '', settings.activeCategory));
-    if (validItems.length === 0) {
-      console.log(`ℹ️ Kategori içerik filtresi sonrası uygun haber kalmadı (${settings.activeCategory}).`);
-      return;
-    }
-  }
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
   if (feed.type === 'youtube') {
