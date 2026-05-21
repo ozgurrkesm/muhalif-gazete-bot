@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.8 — /ara başlıktan kaynak domain çıkarma + SOURCE_DOMAINS haritası — 2026-05-21');
+console.log('🤖 Bot v2.9 — /ara paralel fetch: kaynak site og:meta artık timeout yaşatmıyor — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3699,36 +3699,45 @@ bot.on('callback_query', async (query) => {
     const fetchData = async () => {
       console.log(`🔍 [ara] Başlıyor: "${title.slice(0,60)}" | rssImage=${!!rssImage} | source=${sourceUrl || 'yok'}`);
 
-      // URL çözmeyi hemen başlat
+      const EMPTY_META = () => ({ image: null, image2: null, description: null, articleBody: null });
+
+      // 1. URL çözmeyi hemen başlat (paralel)
       const urlPromise = (link.includes('news.google.com')
         ? resolveGoogleNewsUrl(link).catch(() => null)
         : Promise.resolve(null)).then(r => r || link);
 
-      // og:image — URL hazır olur olmaz başlasın; Google News URL'si çözülemediyse kaynak siteden dene
-      const ogMetaPromise = urlPromise.then(async url => {
-        const isGoogleNewsUrl = url.includes('news.google.com');
-        console.log(`🌐 [ara] og:meta çekiliyor: ${url.slice(0,80)} (googleNews=${isGoogleNewsUrl})`);
-        const meta = await fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null, articleBody: null }));
-        // Google News URL çözülemediyse → kaynak sitenin anasayfasından og:image al
-        if (isGoogleNewsUrl && !meta.image && sourceUrl) {
-          console.log(`🔄 [ara] Kaynak site og:image: ${sourceUrl}`);
-          const srcMeta = await fetchOgMeta(sourceUrl).catch(() => ({ image: null, description: null, articleBody: null }));
-          return {
-            image: srcMeta.image || null,
-            image2: srcMeta.image2 || null,
-            description: meta.description || srcMeta.description || null,
-            articleBody: meta.articleBody || srcMeta.articleBody || null,
-          };
-        }
-        return meta;
+      // 2. Kaynak site og:meta'sını HEMEN başlat (urlPromise'i bekleme — paralel!)
+      //    Sıralı beklemek: resolveUrl(7s) + ogMeta(12s) + sourceOg(12s) = 31s > 30s timeout
+      //    Paralel yaparak hepsini ~12-15s'ye indiriyoruz
+      const srcMetaPromise = sourceUrl
+        ? fetchOgMeta(sourceUrl).catch(() => EMPTY_META())
+        : Promise.resolve(EMPTY_META());
+
+      // 3. Çözülen URL'nin og:meta'sı — URL hazır olunca başlar
+      const resolvedMetaPromise = urlPromise.then(async url => {
+        const isGoogleNews = url.includes('news.google.com');
+        console.log(`🌐 [ara] og:meta: ${url.slice(0,80)} (gNews=${isGoogleNews})`);
+        const meta = await fetchOgMeta(url).catch(() => EMPTY_META());
+        return { meta, isGoogleNews };
       });
 
-      // 3 şey paralel: URL çözme, og:image (URL'ye zincirli), DDG/LoremFlickr resmi
-      const [realUrl, ogMeta, fallbackImage] = await Promise.all([
+      // 4 şey paralel: URL çözme + çözülmüş URL meta + kaynak site meta + DDG/LoremFlickr resmi
+      const [realUrl, { meta: resolvedMeta, isGoogleNews }, srcMeta, fallbackImage] = await Promise.all([
         urlPromise,
-        ogMetaPromise,
+        resolvedMetaPromise,
+        srcMetaPromise,
         rssImage ? Promise.resolve(rssImage) : fetchDuckDuckGoImage(title).catch(() => null),
       ]);
+
+      console.log(`📊 [ara] resolvedMeta.image=${!!resolvedMeta.image} srcMeta.image=${!!srcMeta.image} fallback=${!!fallbackImage} isGNews=${isGoogleNews}`);
+
+      // Sonuçları birleştir: gerçek makale URL'si varsa onun bilgilerini, yoksa kaynak siteden al
+      const ogMeta = {
+        image:       (!isGoogleNews && resolvedMeta.image) ? resolvedMeta.image : (srcMeta.image || resolvedMeta.image || null),
+        image2:      resolvedMeta.image2 || srcMeta.image2 || null,
+        description: resolvedMeta.description || srcMeta.description || null,
+        articleBody: resolvedMeta.articleBody || srcMeta.articleBody || null,
+      };
 
       // Resim önceliği: RSS → og:image → og:image2 → DDG/Wikipedia/LoremFlickr
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
