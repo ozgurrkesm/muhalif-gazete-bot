@@ -1074,139 +1074,71 @@ Başlık: ${title}`;
 // ─── DuckDuckGo Görsel Arama ──────────────────────────────────────────────────
 
 // ─── Bing Image Search: m={} attribute'unu HTML-decode ederek parse et ────────
-function fetchBingImage(query) {
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-    const timer = setTimeout(() => done(null), 9000);
-    const req = https.get(
-      `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC3&first=1`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36', 'Accept-Language': 'tr-TR,tr;q=0.9' } },
-      (res) => {
-        let html = '';
-        res.on('data', ch => { html += ch; if (html.length > 350000) res.destroy(); });
-        res.on('end', () => {
-          clearTimeout(timer);
-          // Bing, resim verisini m="{&quot;murl&quot;:...}" şeklinde HTML encode ediyor
-          const mAttrs = [...html.matchAll(/m="{([^"]{30,})}"/g)].map(m => m[1]);
-          const images = [];
-          for (const raw of mAttrs) {
-            try {
-              const decoded = raw.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;/g, "'");
-              const obj = JSON.parse('{' + decoded + '}');
-              if (obj.murl && /^https?:/.test(obj.murl)) images.push(obj.murl);
-            } catch {}
-          }
-          const best = images.find(u => /.(jpg|jpeg|png|webp)/i.test(u)) || images[0] || null;
-          console.log(`🔍 Bing: ${images.length} resim bulundu, seçilen: ${(best||'yok').slice(0,80)}`);
-          done(best);
-        });
-        res.on('error', () => { clearTimeout(timer); done(null); });
-      }
-    );
-    req.on('error', () => { clearTimeout(timer); done(null); });
-    req.setTimeout(8000, () => { req.destroy(); clearTimeout(timer); done(null); });
-  });
+// ─── Resim Arama: Wikipedia REST API (garantili, hiç bloklanmaz) ───────────────
+// Başlıktan anlamlı kelimeler çıkar (özel isimler, teknik terimler)
+function extractKeywords(title) {
+  const stop = new Set([
+    'bir','iki','üç','dört','beş','bu','şu','ve','ile','de','da','ki',
+    'mi','mı','mu','mü','için','olan','gibi','artık','nasıl','neden',
+    'ne','hangi','son','yeni','büyük','küçük','ilk','son','daki','deki',
+    'den','dan','tan','ten','ten','ten','ın','in','un','ün','nın','nin',
+    'nın','nün','nun','dan','den','ndan','nden','ile','için','kadar',
+    'çok','az','en','daha','ancak','ama','fakat','veya','ya','ya da',
+  ]);
+  return title
+    .replace(/[!?.,;:()[]{}'"`]/g, ' ')
+    .split(/s+/)
+    .filter(w => w.length > 2 && !stop.has(w.toLowerCase()))
+    .filter(w => /^[A-ZĞÜŞÖÇİa-zğüşöçı0-9]/u.test(w))
+    .slice(0, 5);
 }
 
-// ─── Wikipedia: konu adına göre resim çek (JSON API, hiç bloklanmaz) ──────────
-function fetchWikipediaImage(query) {
+// Wikipedia REST summary API — tek çağrı, anında döner
+function wikiImage(term) {
   return new Promise((resolve) => {
-    let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-    const timer = setTimeout(() => done(null), 8000);
-    // Başlıktan anahtar kelime çıkar (ilk 1-2 önemli kelime)
-    const stopWords = new Set(['bir','ve','ile','bu','o','da','de','ki','mi','mı','mu','mü','için','olan','gibi','olan','artık','nasıl','neden','ne','bu','şu','hangi']);
-    const keywords = query.split(/[s,;:!?.]+/)
-      .filter(w => w.length > 2 && !stopWords.has(w.toLowerCase()))
-      .slice(0, 2).join(' ');
-    if (!keywords) return done(null);
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const timer = setTimeout(() => finish(null), 5000);
 
-    // Önce TR Wikipedia, bulamazsa EN Wikipedia
-    const tryWiki = (lang, cb) => {
-      const searchUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(keywords)}&format=json&srlimit=1&srprop=`;
-      https.get(searchUrl, { headers: { 'User-Agent': 'NewsBot/1.0 (telegram-bot)' } }, (res) => {
-        let d = ''; res.on('data', c => d += c);
+    const tryLang = (lang, next) => {
+      const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`;
+      https.get(url, { headers: { 'User-Agent': 'NewsBot/1.0 (telegram; contact@example.com)' } }, (res) => {
+        if (res.statusCode === 404 || res.statusCode === 301) {
+          res.destroy();
+          return next ? tryLang(next, null) : finish(null);
+        }
+        let d = ''; res.on('data', ch => d += ch);
         res.on('end', () => {
           try {
             const j = JSON.parse(d);
-            const title = j?.query?.search?.[0]?.title;
-            if (!title) return cb(null);
-            const imgUrl = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&format=json&pithumbsize=1280`;
-            https.get(imgUrl, { headers: { 'User-Agent': 'NewsBot/1.0 (telegram-bot)' } }, (res2) => {
-              let d2 = ''; res2.on('data', c => d2 += c);
-              res2.on('end', () => {
-                try {
-                  const j2 = JSON.parse(d2);
-                  const pages = j2?.query?.pages || {};
-                  const img = Object.values(pages)[0]?.thumbnail?.source || null;
-                  cb(img);
-                } catch { cb(null); }
-              });
-              res2.on('error', () => cb(null));
-            }).on('error', () => cb(null));
-          } catch { cb(null); }
+            const img = j?.originalimage?.source || j?.thumbnail?.source || null;
+            // SVG ve çok küçük görselleri atla
+            if (img && !/\.svg/i.test(img)) { clearTimeout(timer); return finish(img); }
+          } catch {}
+          next ? tryLang(next, null) : finish(null);
         });
-        res.on('error', () => cb(null));
-      }).on('error', () => cb(null));
+        res.on('error', () => (next ? tryLang(next, null) : finish(null)));
+      }).on('error', () => (next ? tryLang(next, null) : finish(null)));
     };
 
-    tryWiki('tr', (img) => {
-      if (img) { clearTimeout(timer); return done(img); }
-      tryWiki('en', (img2) => { clearTimeout(timer); done(img2); });
-    });
-
-    setTimeout(() => done(null), 7500);
+    // TR → EN sıralamasıyla dene
+    tryLang('tr', 'en');
   });
 }
 
-// ─── Ana resim arama: Bing → Wikipedia → DDG ─────────────────────────────────
+// Birden fazla kelimeyi paralel ara, ilk bulunanı döndür
 async function fetchDuckDuckGoImage(query) {
-  // Bing ve Wikipedia'yı paralel dene
-  const [bingImg, wikiImg] = await Promise.all([
-    fetchBingImage(query).catch(() => null),
-    fetchWikipediaImage(query).catch(() => null),
-  ]);
-  if (bingImg) { console.log('✅ Bing resmi kullanılıyor'); return bingImg; }
-  if (wikiImg) { console.log('✅ Wikipedia resmi kullanılıyor'); return wikiImg; }
+  const keywords = extractKeywords(query);
+  if (!keywords.length) return null;
 
-  // Son çare: DDG
-  return new Promise((resolve) => {
-    let settled = false;
-    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
-    const timer = setTimeout(() => done(null), 8000);
-    https.get(
-      `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
-      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
-      (res) => {
-        let html = '';
-        res.on('data', ch => { html += ch; if (html.length > 80000) res.destroy(); });
-        res.on('end', () => {
-          clearTimeout(timer);
-          const vqd = html.match(/vqd=['"]([^'"]+)['"]/)?.[1];
-          if (!vqd) return done(null);
-          https.get(
-            `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&vqd=${vqd}&p=1&o=json&l=tr-tr&f=,,,`,
-            { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://duckduckgo.com/' } },
-            (res2) => {
-              let data = '';
-              res2.on('data', ch => { data += ch; });
-              res2.on('end', () => {
-                try {
-                  const results = JSON.parse(data)?.results || [];
-                  const best = results.find(r => r.image && (r.width||0) >= 800) || results[0];
-                  done(best?.image || null);
-                } catch { done(null); }
-              });
-              res2.on('error', () => done(null));
-            }
-          ).on('error', () => done(null));
-        });
-        res.on('error', () => { clearTimeout(timer); done(null); });
-      }
-    ).on('error', () => { clearTimeout(timer); done(null); });
-  });
+  // Hepsini aynı anda başlat
+  const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
+  const found = results.find(r => r !== null) || null;
+  if (found) console.log(`🖼 Wikipedia görseli: ${found.slice(0, 80)}`);
+  else console.log(`⚠️ Wikipedia: "${keywords.join(', ')}" için resim bulunamadı`);
+  return found;
 }
+
 
 // ─── Web'den Video Çıkarma ────────────────────────────────────────────────────
 
