@@ -3853,6 +3853,22 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
   }
 });
 
+// ─── /testkanal: Kanal bağlantısını test et ──────────────────────────────────
+bot.onText(/\/testkanal/, async (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, `🔍 Test başlıyor...\nKanal: ${CHANNEL_ID}`);
+  try {
+    const sentMsg = await bot.sendMessage(CHANNEL_ID, '🔧 Test mesajı — bot çalışıyor!');
+    await bot.deleteMessage(CHANNEL_ID, sentMsg.message_id).catch(() => {});
+    await bot.sendMessage(chatId, '✅ Kanal bağlantısı BAŞARILI! Bot kanala yazabiliyor.');
+  } catch (err) {
+    await bot.sendMessage(chatId,
+      `❌ Kanal bağlantısı BAŞARISIZ!\n\nHata: ${err.message}\n\nOlası sebepler:\n• Bot kanalda admin değil\n• CHANNEL_ID yanlış (şu an: ${CHANNEL_ID})\n• Kanal username değişmiş`
+    );
+  }
+});
+
 bot.onText(/\/sondakika/, async (msg) => {
   if (!isAdmin(msg.chat.id)) {
     await bot.sendMessage(msg.chat.id, '⛔ Bu komut sadece adminlere açık.\n\n/setadmin <şifre> komutuyla admin olabilirsin.');
