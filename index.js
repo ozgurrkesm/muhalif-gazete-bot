@@ -3433,21 +3433,27 @@ bot.on('callback_query', async (query) => {
       chat_id: chatId, message_id: msgId
     }).catch(() => {});
 
-    // Google News yönlendirmesini çöz, gerçek makale URL'sini al
-    const realUrl = (link.includes('news.google.com')
-      ? await resolveGoogleNewsUrl(link).catch(() => null)
-      : null) || link;
+    // Tüm veri toplama işlemini 20s timeout'a al — askıda kalmasın
+    const fetchData = async () => {
+      const realUrl = (link.includes('news.google.com')
+        ? await resolveGoogleNewsUrl(link).catch(() => null)
+        : null) || link;
+      const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, description: null, articleBody: null }));
+      let imageUrl = ogMeta.image || null;
+      if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
+      const description = ogMeta.description || item.contentSnippet || item.summary || '';
+      const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
+      return { imageUrl, description, aiSummary };
+    };
 
-    // Haber sayfasından tam içeriği çek (og:image + articleBody)
-    const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, description: null, articleBody: null }));
-
-    // Full HD resim
-    let imageUrl = ogMeta.image || null;
-    if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
-
-    // Detaylı AI özeti (link yok, açıklayıcı)
-    const description = ogMeta.description || item.contentSnippet || item.summary || '';
-    const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
+    const { imageUrl, description, aiSummary } = await Promise.race([
+      fetchData(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
+    ]).catch(() => ({
+      imageUrl: null,
+      description: item.contentSnippet || item.summary || '',
+      aiSummary: null,
+    }));
 
     const categoryTag = detectCategory(title, description);
     const catE = categoryTag ? `${categoryTag} ` : '';
