@@ -91,10 +91,22 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const PUBLISHED_FILE = path.join(__dirname, 'published.json');
 
+// AI istemcisi: önce Groq, sonra OpenAI/Replit AI Integrations
+const AI_ENABLED = !!(process.env.GROQ_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
+const AI_MODEL = process.env.GROQ_API_KEY ? 'llama-3.1-8b-instant' : 'gpt-4o-mini';
 const aiClient = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || 'dummy',
+  baseURL: process.env.GROQ_API_KEY
+    ? 'https://api.groq.com/openai/v1'
+    : (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1'),
+  apiKey: process.env.GROQ_API_KEY
+    || process.env.AI_INTEGRATIONS_OPENAI_API_KEY
+    || 'dummy',
 });
+if (AI_ENABLED) {
+  console.log(`✅ AI aktif — ${process.env.GROQ_API_KEY ? 'Groq (' + AI_MODEL + ')' : 'OpenAI (' + AI_MODEL + ')'}`);
+} else {
+  console.log('⚠️  AI devre dışı — GROQ_API_KEY veya AI_INTEGRATIONS_OPENAI_BASE_URL ayarlanmamış');
+}
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
@@ -974,7 +986,7 @@ async function summarizeNews(title, description, articleBody = null) {
   const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 2000);
 
   // AI yoksa: makale gövdesi varsa onu kullan, yoksa RSS açıklamasını
-  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+  if (!AI_ENABLED) {
     // Önce makale gövdesini tercih et (daha zengin içerik)
     const best = bodyText.length > 80 ? bodyText.slice(0, 400) : (inputText.length > 20 ? inputText.slice(0, 400) : null);
     return best;
@@ -986,7 +998,7 @@ async function summarizeNews(title, description, articleBody = null) {
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: AI_MODEL,
         max_tokens: 220,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -1008,7 +1020,7 @@ async function summarizeNewsDetailed(title, description, articleBody = null) {
   const bodyText = articleBody && !isGarbageText(articleBody) ? articleBody : '';
   const fullContent = [inputText, bodyText].filter(Boolean).join('\n\n').slice(0, 3000);
 
-  if (!process.env.AI_INTEGRATIONS_OPENAI_BASE_URL) {
+  if (!AI_ENABLED) {
     // Başlıkla birebir aynı veya çok yakın metni özet olarak döndürme
     const isTitleRepeat = (text) => {
       if (!text || text.length < 20) return true;
@@ -1033,7 +1045,7 @@ Başlık: ${title}`;
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: AI_MODEL,
         max_tokens: 500,
         messages: [{ role: 'user', content: prompt }],
       }),
