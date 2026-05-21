@@ -3554,23 +3554,20 @@ bot.on('callback_query', async (query) => {
     const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
 
     const fetchData = async () => {
-      // URL çözme + DDG araması aynı anda başlasın
-      const [realUrl, ddgImage] = await Promise.all([
+      // Hepsi paralel başlasın: URL çözme + resim arama + AI özeti
+      const [realUrl, fallbackImage, aiSummary] = await Promise.all([
         (link.includes('news.google.com')
           ? resolveGoogleNewsUrl(link).catch(() => null)
           : Promise.resolve(null)).then(r => r || link),
-        rssImage ? Promise.resolve(null) : fetchDuckDuckGoImage(title).catch(() => null),
-      ]);
-
-      // OG meta + AI özeti aynı anda çalışsın
-      const [ogMeta, aiSummary] = await Promise.all([
-        fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
+        rssImage ? Promise.resolve(rssImage) : fetchDuckDuckGoImage(title).catch(() => null),
         summarizeNewsDetailed(title, baseDesc, null).catch(() => null),
       ]);
 
-      // Resim önceliği: RSS resmi → og:image → og:image2 → DDG/Wiki/LoremFlickr
-      const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || ddgImage
-        || await fetchDuckDuckGoImage(title).catch(() => null);
+      // og:image çek (gerçek URL elde edildikten sonra)
+      const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null }));
+
+      // Resim önceliği: RSS → og:image → og:image2 → Wikipedia/LoremFlickr
+      const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
       const description = ogMeta.description || baseDesc;
       return { imageUrl, description, aiSummary };
     };
