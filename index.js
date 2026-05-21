@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.11 — /ara sendPhoto sadeleştirildi, LoremFlickr öncelikli — 2026-05-21');
+console.log('🤖 Bot v2.12 — /ara timeout 45s, LoremFlickr oncelikli, sendPhoto duzeltildi — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3784,21 +3784,21 @@ bot.on('callback_query', async (query) => {
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
       const description = ogMeta.description || baseDesc;
 
-      // AI özeti: ogMeta.articleBody artık mevcut — sayfadan çekilen içerikle özetle
+      // AI özeti: görsel aramayla PARALEL başlat — sırayla bekleme, ikisi aynı anda koşsun
       const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
 
       console.log(`✅ [ara] Tamamlandı — imageUrl=${imageUrl ? imageUrl.slice(0,60) : 'null'} | aiSummary=${aiSummary ? aiSummary.slice(0,40)+'…' : 'null'}`);
       return { imageUrl, description, aiSummary };
     };
 
+    // Timeout 45s — paralel fetch (~19s) + AI (~10s) = ~29s, güvenli marj için 45s
     const { imageUrl, description, aiSummary } = await Promise.race([
       fetchData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000)),
-    ]).catch(() => ({
-      imageUrl: null,
-      description: baseDesc,
-      aiSummary: null,
-    }));
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 45000)),
+    ]).catch((err) => {
+      console.error('❌ [ara] fetchData timeout/hata:', err?.message);
+      return { imageUrl: null, description: baseDesc, aiSummary: null };
+    });
 
     const categoryTag = detectCategory(title, description);
     const catE = categoryTag ? `${categoryTag} ` : '';
