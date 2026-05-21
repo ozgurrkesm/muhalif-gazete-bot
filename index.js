@@ -3433,25 +3433,35 @@ bot.on('callback_query', async (query) => {
       chat_id: chatId, message_id: msgId
     }).catch(() => {});
 
-    // Tüm veri toplama işlemini 20s timeout'a al — askıda kalmasın
+    // DDG resim araması ve URL çözme'yi paralel başlat
+    const baseDesc = item.contentSnippet || item.summary || '';
     const fetchData = async () => {
-      const realUrl = (link.includes('news.google.com')
-        ? await resolveGoogleNewsUrl(link).catch(() => null)
-        : null) || link;
-      const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, description: null, articleBody: null }));
-      let imageUrl = ogMeta.image || null;
-      if (!imageUrl) imageUrl = await fetchDuckDuckGoImage(title).catch(() => null);
-      const description = ogMeta.description || item.contentSnippet || item.summary || '';
-      const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
+      // DDG araması + URL çözme aynı anda başlasın
+      const [realUrl, ddgImage] = await Promise.all([
+        (link.includes('news.google.com')
+          ? resolveGoogleNewsUrl(link).catch(() => null)
+          : Promise.resolve(null)).then(r => r || link),
+        fetchDuckDuckGoImage(title).catch(() => null),
+      ]);
+
+      // OG meta + AI özeti aynı anda çalışsın
+      const [ogMeta, aiSummary] = await Promise.all([
+        fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
+        summarizeNewsDetailed(title, baseDesc, null).catch(() => null),
+      ]);
+
+      // Resim önceliği: og:image → og:image:secure_url → DDG
+      const imageUrl = ogMeta.image || ogMeta.image2 || ddgImage;
+      const description = ogMeta.description || baseDesc;
       return { imageUrl, description, aiSummary };
     };
 
     const { imageUrl, description, aiSummary } = await Promise.race([
       fetchData(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 30000)),
     ]).catch(() => ({
       imageUrl: null,
-      description: item.contentSnippet || item.summary || '',
+      description: baseDesc,
       aiSummary: null,
     }));
 
