@@ -1130,6 +1130,58 @@ function wikiImage(term) {
   });
 }
 
+// ─── Türkçe → İngilizce anahtar kelime çevirisi (Unsplash için) ──────────────
+const TR_EN_MAP = {
+  'ekonomi':'economy','siyaset':'politics','spor':'sports','futbol':'football',
+  'seçim':'election','deprem':'earthquake','savaş':'war','teknoloji':'technology',
+  'sağlık':'health','eğitim':'education','para':'money','borsa':'stock market',
+  'dolar':'dollar','euro':'euro','altın':'gold','petrol':'oil','enerji':'energy',
+  'mahkeme':'court','meclis':'parliament','yangın':'fire','sel':'flood',
+  'iklim':'climate','çevre':'nature','uçak':'airplane','tren':'train',
+  'asker':'military','ordu':'military','polis':'police','suç':'crime',
+  'turizm':'tourism','konut':'housing','inşaat':'construction','tarım':'agriculture',
+  'ithalat':'import','ihracat':'export','enflasyon':'inflation','faiz':'interest rate',
+  'türkiye':'turkey','istanbul':'istanbul','ankara':'ankara','erdoğan':'president',
+  'müzik':'music','sanat':'art','film':'film','kitap':'book','bilim':'science',
+  'uzay':'space','yapay':'artificial intelligence','zeka':'intelligence',
+  'bitcoin':'bitcoin','kripto':'cryptocurrency','sosyal':'social media',
+  'galatasaray':'football stadium','fenerbahçe':'football','beşiktaş':'football',
+  'trabzonspor':'football','maç':'football match','gol':'goal','transfer':'transfer',
+};
+
+function translateKeywordsToEn(keywords) {
+  return keywords.map(k => TR_EN_MAP[k.toLowerCase()] || k).slice(0, 3);
+}
+
+// ─── Unsplash Source API — ücretsiz, API anahtarsız, Full HD ─────────────────
+async function fetchUnsplashImage(query) {
+  const rawKws = extractKeywords(query);
+  if (!rawKws.length) return null;
+  const enKws = translateKeywordsToEn(rawKws);
+  const term  = enKws.join(',');
+  const sourceUrl = `https://source.unsplash.com/1920x1080/?${encodeURIComponent(term)}`;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    const timer = setTimeout(() => finish(null), 6000);
+    const req = https.request(sourceUrl, { method: 'HEAD' }, (res) => {
+      clearTimeout(timer);
+      const loc = res.headers['location'] || '';
+      if (loc && loc.startsWith('https://images.unsplash.com')) {
+        const direct = loc.split('?')[0] + '?w=1920&h=1080&fit=crop&q=85&auto=format';
+        console.log(`🖼 Unsplash (${enKws.join(',')}): ${direct.slice(0, 80)}`);
+        finish(direct);
+      } else if (res.statusCode >= 200 && res.statusCode < 300) {
+        finish(sourceUrl);
+      } else {
+        finish(null);
+      }
+    });
+    req.on('error', () => { clearTimeout(timer); finish(null); });
+    req.end();
+  });
+}
+
 // ─── Serper.dev Google Images API (SERPER_API_KEY varsa) ─────────────────────
 async function fetchSerperImage(query) {
   const key = process.env.SERPER_API_KEY;
@@ -1159,7 +1211,7 @@ async function fetchSerperImage(query) {
   });
 }
 
-// ─── Ana resim arama: Serper(Google) → Wikipedia → null ──────────────────────
+// ─── Ana resim arama: Serper → og:image → Wikipedia → Unsplash(Full HD) ──────
 async function fetchDuckDuckGoImage(query) {
   // 1. Serper.dev (Google Images) — SERPER_API_KEY varsa önce bunu dene
   const serperImg = await fetchSerperImage(query).catch(() => null);
@@ -1167,12 +1219,18 @@ async function fetchDuckDuckGoImage(query) {
 
   // 2. Wikipedia REST API — paralel kelime araması
   const keywords = extractKeywords(query);
-  if (!keywords.length) return null;
-  const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
-  const found = results.find(r => r !== null) || null;
-  if (found) console.log(`🖼 Wikipedia: ${found.slice(0, 80)}`);
-  else console.log(`⚠️ Resim bulunamadı: "${keywords.join(', ')}"`);
-  return found;
+  if (keywords.length) {
+    const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
+    const wikiImg = results.find(r => r !== null) || null;
+    if (wikiImg) { console.log(`🖼 Wikipedia: ${wikiImg.slice(0, 80)}`); return wikiImg; }
+  }
+
+  // 3. Unsplash Source API — konuyla alakalı Full HD fotoğraf (ücretsiz, API anahtarsız)
+  const unsplashImg = await fetchUnsplashImage(query).catch(() => null);
+  if (unsplashImg) return unsplashImg;
+
+  console.log(`⚠️ Hiçbir kaynaktan resim bulunamadı: "${keywords.join(', ')}"`);
+  return null;
 }
 
 
