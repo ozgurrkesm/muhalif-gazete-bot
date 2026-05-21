@@ -91,32 +91,47 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const PUBLISHED_FILE = path.join(__dirname, 'published.json');
 
-// AI istemcisi: Gemini > Groq > OpenAI/Replit AI Integrations
-const AI_ENABLED = !!(
+// AI istemcisi: Cloudflare > Gemini > Groq > OpenAI/Replit AI Integrations
+const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CF_API_TOKEN  = process.env.CLOUDFLARE_API_TOKEN;
+const CF_AI_ENABLED = !!(CF_ACCOUNT_ID && CF_API_TOKEN);
+
+const AI_ENABLED = CF_AI_ENABLED || !!(
   process.env.GEMINI_API_KEY ||
   process.env.GROQ_API_KEY ||
   process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
 );
-const AI_MODEL = process.env.GEMINI_API_KEY ? 'gemini-2.0-flash'
+
+const AI_MODEL = CF_AI_ENABLED
+  ? '@cf/meta/llama-3.1-8b-instruct'
+  : process.env.GEMINI_API_KEY ? 'gemini-2.0-flash'
   : process.env.GROQ_API_KEY ? 'llama-3.1-8b-instant'
   : 'gpt-4o-mini';
-const aiClient = new OpenAI({
-  baseURL: process.env.GEMINI_API_KEY
-    ? 'https://generativelanguage.googleapis.com/v1beta/openai/'
-    : process.env.GROQ_API_KEY
-      ? 'https://api.groq.com/openai/v1'
-      : (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1'),
-  apiKey: process.env.GEMINI_API_KEY
-    || process.env.GROQ_API_KEY
-    || process.env.AI_INTEGRATIONS_OPENAI_API_KEY
-    || 'dummy',
-});
+
+const aiClient = CF_AI_ENABLED
+  ? new OpenAI({
+      baseURL: `https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/ai/v1`,
+      apiKey: CF_API_TOKEN,
+    })
+  : new OpenAI({
+      baseURL: process.env.GEMINI_API_KEY
+        ? 'https://generativelanguage.googleapis.com/v1beta/openai/'
+        : process.env.GROQ_API_KEY
+          ? 'https://api.groq.com/openai/v1'
+          : (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1'),
+      apiKey: process.env.GEMINI_API_KEY
+        || process.env.GROQ_API_KEY
+        || process.env.AI_INTEGRATIONS_OPENAI_API_KEY
+        || 'dummy',
+    });
+
 if (AI_ENABLED) {
-  const src = process.env.GEMINI_API_KEY ? 'Google Gemini'
+  const src = CF_AI_ENABLED ? 'Cloudflare Workers AI'
+    : process.env.GEMINI_API_KEY ? 'Google Gemini'
     : process.env.GROQ_API_KEY ? 'Groq' : 'OpenAI';
   console.log(`✅ AI aktif — ${src} (${AI_MODEL})`);
 } else {
-  console.log('⚠️  AI devre dışı — GEMINI_API_KEY, GROQ_API_KEY veya AI_INTEGRATIONS_OPENAI_BASE_URL ayarlanmamış');
+  console.log('⚠️  AI devre dışı — CLOUDFLARE_API_TOKEN, GEMINI_API_KEY, GROQ_API_KEY veya AI_INTEGRATIONS_OPENAI_BASE_URL ayarlanmamış');
 }
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
