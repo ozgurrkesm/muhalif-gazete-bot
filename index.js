@@ -1073,38 +1073,82 @@ Başlık: ${title}`;
 
 // ─── DuckDuckGo Görsel Arama ──────────────────────────────────────────────────
 
-function fetchDuckDuckGoImage(query) {
+// ─── Bing Image Search (birincil) + DDG (yedek) ──────────────────────────────
+function fetchBingImage(query) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const timer = setTimeout(() => done(null), 9000);
+    const searchUrl = `https://www.bing.com/images/search?q=${encodeURIComponent(query)}&form=HDRSC3&first=1&tsc=ImageBasicHover`;
+    const req = https.get(searchUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en;q=0.8',
+      }
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.destroy(); clearTimeout(timer); done(null); return;
+      }
+      let html = '';
+      res.on('data', (ch) => { html += ch; if (html.length > 300000) res.destroy(); });
+      res.on('end', () => {
+        clearTimeout(timer);
+        // Bing HTML'inde resimler "murl" anahtarıyla JSON içinde gömülüdür
+        const murls = [...html.matchAll(/"murl":"(https?:[^"]+)"/g)]
+          .map(m => { try { return decodeURIComponent(m[1].replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h,16)))); } catch { return m[1]; } })
+          .filter(u => /\.(jpg|jpeg|png|webp)/i.test(u) && !u.includes('microsoft') && !u.includes('bing.com'));
+        // Büyük resmi tercih et (URL'de boyut ipucu varsa)
+        const best = murls.find(u => /[_-](1280|1920|1600|large|big|full|hd|high)/i.test(u)) || murls[0] || null;
+        done(best);
+      });
+      res.on('error', () => { clearTimeout(timer); done(null); });
+    });
+    req.on('error', () => { clearTimeout(timer); done(null); });
+    req.setTimeout(8000, () => { req.destroy(); clearTimeout(timer); done(null); });
+  });
+}
+
+async function fetchDuckDuckGoImage(query) {
+  // Önce Bing dene, başarısız olursa DDG'yi dene
+  const bingResult = await fetchBingImage(query).catch(() => null);
+  if (bingResult) return bingResult;
+
+  // DDG yedek
   return new Promise((resolve) => {
     let settled = false;
     const done = (v) => { if (!settled) { settled = true; resolve(v); } };
     const timer = setTimeout(() => done(null), 8000);
-
     const searchReq = https.get(
       `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
       { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' } },
       (res) => {
         let html = '';
-        res.on('data', (c) => { html += c; if (html.length > 80000) res.destroy(); });
+        res.on('data', (ch) => { html += ch; if (html.length > 80000) res.destroy(); });
         res.on('end', () => {
           clearTimeout(timer);
           const vqdMatch = html.match(/vqd=['"]([^'"]+)['"]/);
           if (!vqdMatch) return done(null);
           const vqd = vqdMatch[1];
-
-          const imgUrl = `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&vqd=${vqd}&p=1&o=json&l=tr-tr&f=,,,`;
-          https.get(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://duckduckgo.com/' } }, (res2) => {
-            let data = '';
-            res2.on('data', (c) => { data += c; });
-            res2.on('end', () => {
-              try {
-                const json = JSON.parse(data);
-                const results = json?.results || [];
-                const best = results.find((r) => r.image && (r.width || 0) >= 1280) || results.find((r) => r.image && (r.width || 0) >= 800) || results[0];
-                done(best?.image || null);
-              } catch { done(null); }
-            });
-            res2.on('error', () => done(null));
-          }).on('error', () => done(null));
+          https.get(
+            `https://duckduckgo.com/i.js?q=${encodeURIComponent(query)}&vqd=${vqd}&p=1&o=json&l=tr-tr&f=,,,`,
+            { headers: { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://duckduckgo.com/' } },
+            (res2) => {
+              let data = '';
+              res2.on('data', (ch) => { data += ch; });
+              res2.on('end', () => {
+                try {
+                  const json = JSON.parse(data);
+                  const results = json?.results || [];
+                  const best = results.find(r => r.image && (r.width||0) >= 1280)
+                    || results.find(r => r.image && (r.width||0) >= 800)
+                    || results[0];
+                  done(best?.image || null);
+                } catch { done(null); }
+              });
+              res2.on('error', () => done(null));
+            }
+          ).on('error', () => done(null));
         });
         res.on('error', () => { clearTimeout(timer); done(null); });
       }
