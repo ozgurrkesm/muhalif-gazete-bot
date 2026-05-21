@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.6 — /ara görsel+AI özeti düzeltmesi — 2026-05-21');
+console.log('🤖 Bot v2.7 — /ara kaynak site görseli + TR_EN_MAP genişletme — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -1190,6 +1190,27 @@ const TR_EN_MAP = {
   'iklim':'climate','orman':'forest','deniz':'sea','hava':'weather',
   'okul':'school','üniversite':'university','öğrenci':'student','öğretmen':'teacher',
   'emekli':'retirement','maaş':'salary','işçi':'worker','grev':'strike',
+  // Yerel yönetim & hukuk
+  'kayyum':'government','belediye':'city hall','başkan':'mayor','vali':'governor',
+  'prefekt':'government','atama':'appointment','görev':'duty','yönetim':'administration',
+  'şişli':'istanbul','kadıköy':'istanbul','üsküdar':'istanbul','bağcılar':'istanbul',
+  'beşiktaş':'istanbul','beyoğlu':'istanbul','fatih':'istanbul','ataşehir':'istanbul',
+  'izmir':'izmir','bursa':'bursa','antalya':'antalya','adana':'adana','gaziantep':'city',
+  'kocaeli':'turkey','konya':'turkey','mersin':'turkey','diyarbakır':'turkey',
+  // Güncel siyasi terimler
+  'muhtır':'government','fesih':'politics','lağvetme':'politics','kapatma':'court',
+  'baro':'lawyer','avukat':'lawyer','hâkim':'judge','savcı':'prosecutor',
+  'ceza':'prison','tahliye':'prison','infaz':'justice','af':'justice',
+  'protesto':'protest','gösteri':'demonstration','yürüyüş':'march','eylem':'protest',
+  'sendika':'union','dernek':'association','vakıf':'foundation','stk':'organization',
+  'ihraç':'dismissal','açığa alma':'government','görevden alma':'dismissal',
+  'istihdam':'employment','ücret':'salary','zam':'raise','asgari':'minimum wage',
+  'konut':'housing','kira':'rent','ev':'house','arsa':'land','inşaat':'construction',
+  'trafik':'traffic','kaza':'accident','hayat':'life','ölü':'death','yaralı':'injury',
+  'terör':'terror','pkk':'terror','fetö':'terror','uyuşturucu':'drugs',
+  'silah':'weapon','bomba':'explosion','patlama':'explosion','saldırı':'attack',
+  'seçim':'election','oy':'vote','sandık':'election','aday':'candidate',
+  'bütçe':'budget','açık':'deficit','borç':'debt','ödenek':'grant',
 };
 
 function translateKeywordsToEn(keywords) {
@@ -3598,28 +3619,46 @@ bot.on('callback_query', async (query) => {
     const rssMedia = extractMedia(item);
     const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
 
+    // RSS item'dan kaynak site URL'sini çıkar (Google News <source url="..."> etiketi)
+    const sourceUrl = (item.source && typeof item.source === 'object' && item.source.url)
+      ? item.source.url
+      : (typeof item.source === 'string' && item.source.startsWith('http') ? item.source : null);
+
     const fetchData = async () => {
-      console.log(`🔍 [ara] Başlıyor: "${title.slice(0,60)}" | rssImage=${!!rssImage} | link=${link.slice(0,60)}`);
+      console.log(`🔍 [ara] Başlıyor: "${title.slice(0,60)}" | rssImage=${!!rssImage} | source=${sourceUrl || 'yok'}`);
 
       // URL çözmeyi hemen başlat
       const urlPromise = (link.includes('news.google.com')
         ? resolveGoogleNewsUrl(link).catch(() => null)
         : Promise.resolve(null)).then(r => r || link);
 
-      // og:image — URL hazır olur olmaz başlasın (DDG'yi beklemesin)
-      const ogMetaPromise = urlPromise.then(url => {
-        console.log(`🌐 [ara] og:image çekiliyor: ${url.slice(0,80)}`);
-        return fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null }));
+      // og:image — URL hazır olur olmaz başlasın; Google News URL'si çözülemediyse kaynak siteden dene
+      const ogMetaPromise = urlPromise.then(async url => {
+        const isGoogleNewsUrl = url.includes('news.google.com');
+        console.log(`🌐 [ara] og:meta çekiliyor: ${url.slice(0,80)} (googleNews=${isGoogleNewsUrl})`);
+        const meta = await fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null, articleBody: null }));
+        // Google News URL çözülemediyse VE kaynak site biliniyorsa → kaynak siteden dene
+        if (isGoogleNewsUrl && !meta.image && sourceUrl) {
+          console.log(`🔄 [ara] Kaynak site og:image deneniyor: ${sourceUrl}`);
+          const srcMeta = await fetchOgMeta(sourceUrl).catch(() => ({ image: null, description: null, articleBody: null }));
+          return {
+            image: srcMeta.image || null,
+            image2: srcMeta.image2 || null,
+            description: meta.description || srcMeta.description || null,
+            articleBody: meta.articleBody || srcMeta.articleBody || null,
+          };
+        }
+        return meta;
       });
 
-      // 3 şey paralel: URL çözme, og:image (URL'ye zincirli), DDG resmi
+      // 3 şey paralel: URL çözme, og:image (URL'ye zincirli), DDG/LoremFlickr resmi
       const [realUrl, ogMeta, fallbackImage] = await Promise.all([
         urlPromise,
         ogMetaPromise,
         rssImage ? Promise.resolve(rssImage) : fetchDuckDuckGoImage(title).catch(() => null),
       ]);
 
-      // Resim önceliği: RSS → og:image → og:image2 → Wikipedia/LoremFlickr
+      // Resim önceliği: RSS → og:image → og:image2 → DDG/Wikipedia/LoremFlickr
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
       const description = ogMeta.description || baseDesc;
 
