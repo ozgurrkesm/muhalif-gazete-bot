@@ -1087,7 +1087,7 @@ function extractKeywords(title) {
   ]);
   return title
     .replace(/[!?.,;:()[]{}'"`]/g, ' ')
-    .split(/s+/)
+    .split(/\s+/)
     .filter(w => w.length > 2 && !stop.has(w.toLowerCase()))
     .filter(w => /^[A-ZĞÜŞÖÇİa-zğüşöçı0-9]/u.test(w))
     .slice(0, 5);
@@ -1098,13 +1098,15 @@ function wikiImage(term) {
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
-    const timer = setTimeout(() => finish(null), 5000);
+    const timer = setTimeout(() => finish(null), 8000);
 
     const tryLang = (lang, next) => {
       const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`;
       https.get(url, { headers: { 'User-Agent': 'NewsBot/1.0 (telegram; contact@example.com)' } }, (res) => {
-        if (res.statusCode === 404 || res.statusCode === 301) {
+        if (res.statusCode === 404) { res.destroy(); return next ? tryLang(next, null) : finish(null); }
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.destroy();
+          // Wikipedia redirect'i → aynı dilde farklı başlık, devam et
           return next ? tryLang(next, null) : finish(null);
         }
         let d = ''; res.on('data', ch => d += ch);
@@ -1113,7 +1115,7 @@ function wikiImage(term) {
             const j = JSON.parse(d);
             const img = j?.originalimage?.source || j?.thumbnail?.source || null;
             // SVG ve çok küçük görselleri atla
-            if (img && !/\.svg/i.test(img)) { clearTimeout(timer); return finish(img); }
+            if (img && !/\.svg$/i.test(img)) { clearTimeout(timer); return finish(img); }
           } catch {}
           next ? tryLang(next, null) : finish(null);
         });
