@@ -1356,7 +1356,6 @@ const BLOCKED_TITLE_PATTERNS = [
   /toplantı notları/i, /basın açıklaması listesi/i,
   /#canl[iı]/i, /canl[iı]\s*yay[iı]n/i, /\bLIVE\b/i,
   /\b(ile\s+rota|ile\s+başak|programı?|özel yayın|stüdyo|röportaj kuşağı)\b/i,
-  // TV program / yayın listesi başlıkları
   /\bçalar saat\b/i,
   /\bana haber(ler)?\b/i,
   /\bsabah bülteni\b/i,
@@ -1364,8 +1363,30 @@ const BLOCKED_TITLE_PATTERNS = [
   /\bhaberleri.*\b\d{4}\b/i,
   /\byayın akışı\b/i,
   /\bkuşak yayın\b/i,
-  // Sadece tarih + program adından oluşan başlıklar (gerçek haber değil)
   /^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+[A-ZĞÜŞÖÇİ]/,
+
+  // ─── Magazin / dedikodu / clickbait filtresi ─────────────────────────────
+  // Duygusal clickbait kalıpları
+  /bakışlarıyla.*vurdu|gözleriyle.*vurdu|vuruldu.*bakış/i,
+  /\b(aşk bombası|aşka geldi|aşkını ilan|gönlünü kaptır|gönlünü çald|kalpleri çald)/i,
+  /\b(büyük randevu|yasak aşk|gizli aşk|sır aşk)/i,
+  /\b(birbirine (girdi|daldı|sardı)|kol kola yakalandı|ele ele görüntülendi)/i,
+  /\b(ayrıldığı (ortaya çıktı|iddia)|boşanma kararı|boşandılar|boşanıyor)/i,
+  /\b(nişanlandı|evlendi|düğün haberi|evlilik haberi).*magazin/i,
+  /\b(hamile (olduğu|kaldığı)|bebek bekliyor|bebek haberi)/i,
+  /\bgözler.*üzerine (çevrildi|dikildi)|herkes.*konuşuyor/i,
+  // Horoskop / burç içerikleri
+  /\b(günlük|haftalık|aylık)\s+(burç|horoskop|astroloji)/i,
+  /\bburç\s+(yorumu|tahmin|öngörü)/i,
+  // Magazin kaynak etiketleri ile gelen içerik
+  /son dakika magazin/i,
+  /magazin\s+haberleri?/i,
+  // Ünlü ilişki/skandal clickbait
+  /\b(ünlü (isim|çift|oyuncu|şarkıcı)).*\b(ihanet|aldatt|şok görüntü|olay görüntü)/i,
+  /şok (görüntü|ifade|itiraf|açıklama).*magazin/i,
+  // Spor dışı "17'den vurdu" tarzı saçma başlıklar
+  /\d+['']?den vurdu/i,
+  /\d+\s*yaşında(ki)?\s+(ünlü|oyuncu|şarkıcı|model)/i,
 ];
 
 function isRecentNews(item) {
@@ -2319,13 +2340,17 @@ async function publishNowInstant() {
           tgLog(`🔗 → ${realUrl.slice(0, 80)}`);
         }
 
-        // fetchOgMeta redirect'leri takip eder — Google News URL olsa bile çalışır
-        // ═══ 1. og:image çek (hızlı — her URL türünde dene) ═════════════
-        tgLog(`🖼 Görsel aranıyor...`);
-        const ogMeta = await fetchOgMeta(realUrl);
+        // ═══ OG meta + DDG resim + AI özeti — hepsini aynı anda başlat ═══
+        tgLog(`🖼 Görsel & özet paralel aranıyor...`);
         const rssMedia = extractMedia(item);
-        // Caption ogMeta sonrası oluştur — description artık dolu
-        { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
+        const [ogMeta, _ddgEarly, aiSEarly] = await Promise.all([
+          fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
+          fetchDuckDuckGoImage(title).then(r => { _autoPublishDdg = r; }).catch(() => {}),
+          summarizeNews(title, rawDesc || description, null).catch(() => null),
+        ]);
+        let _autoPublishDdg = _autoPublishDdg || null;
+        // Caption oluştur
+        { const bestD = ogMeta.description || rawDesc || description; const aiS = aiSEarly || await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
         if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
         let ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
         const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
@@ -2366,8 +2391,8 @@ async function publishNowInstant() {
 
         // ═══ 5. Görsel yok → DuckDuckGo → atla (metin ASLA) ════════════
           if (sentType === 'none') {
-            tgLog('🔎 Görsel bulunamadı, DDG deneniyor: ' + title.slice(0,40));
-            const ddgImg = await fetchDuckDuckGoImage(title).catch(() => null);
+            const ddgImg = _autoPublishDdg || await fetchDuckDuckGoImage(title).catch(() => null);
+            if (ddgImg) tgLog('🔎 DDG görseli kullanılıyor: ' + title.slice(0,40));
             if (ddgImg) {
               try {
                 await bot.sendPhoto(CHANNEL_ID, ddgImg, { caption });
