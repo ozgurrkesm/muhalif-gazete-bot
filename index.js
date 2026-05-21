@@ -1250,9 +1250,9 @@ async function fetchSubjectImage(title) {
 // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
 function stripNewsSource(title) {
-  // " - Kaynak Adı" veya "| Kaynak" gibi sonekleri kaldır
+  // " - Kaynak Adı" veya "| Kaynak" gibi sonekleri kaldır — geniş kaynak listesi
   return (title || '')
-    .replace(/\s*[-–|]\s*(Sözcü|T24|Cumhuriyet|Hürriyet|Milliyet|Sabah|HaberTürk|NTV|CNN Türk|TRT|Halk TV|Tele1|BirGün|OdaTV|ANKA|Bianet|Gazete Duvar|Artı Gerçek|KRT|DHA|AA|İHA|Sputnik|BBC|Reuters|AFP|Fox|Fanatik|Sporx|Goal|A Spor)[^|\-]*$/i, '')
+    .replace(/\s*[-–|]\s*(Sözcü|T24|Cumhuriyet|Hürriyet|Milliyet|Sabah|HaberTürk|Habertürk|NTV|CNN Türk|TRT|Halk TV|Tele1|BirGün|OdaTV|ANKA|Bianet|Gazete Duvar|Artı Gerçek|KRT|DHA|AA|İHA|Sputnik|BBC|Reuters|AFP|Fox|Fanatik|Sporx|Goal|A Spor|FOTOMAÇ|Fotomaç|Fotospor|Spor Arena|Spor Toto|Aspor|İnternetHaber|Haberler|Haberturk|Haberler\.com|Takvim|Türkiye|Akşam|Star|Güneş|Posta|Vatan|Radikal|Yeniçağ|Yeni Şafak|Karar|Türk Haber|Haber Global|Flash Haber|24 TV|360|Medyascope|Diken|Dokuz8Haber|Artı TV|Haber Sol|Gerçek Gündem|Sendika|Evrensel|Birgün|Aydınlık|Yurt|Tercüman|Milli Gazete|Yeni Akit)[^|\-]*$/i, '')
     .trim();
 }
 
@@ -3401,8 +3401,13 @@ bot.on('callback_query', async (query) => {
       chat_id: chatId, message_id: msgId
     }).catch(() => {});
 
+    // Google News yönlendirmesini çöz, gerçek makale URL'sini al
+    const realUrl = (link.includes('news.google.com')
+      ? await resolveGoogleNewsUrl(link).catch(() => null)
+      : null) || link;
+
     // Haber sayfasından tam içeriği çek (og:image + articleBody)
-    const ogMeta = await fetchOgMeta(link).catch(() => ({ image: null, description: null, articleBody: null }));
+    const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, description: null, articleBody: null }));
 
     // Full HD resim
     let imageUrl = ogMeta.image || null;
