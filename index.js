@@ -91,21 +91,32 @@ const USERS_FILE = path.join(__dirname, 'users.json');
 const SETTINGS_FILE = path.join(__dirname, 'settings.json');
 const PUBLISHED_FILE = path.join(__dirname, 'published.json');
 
-// AI istemcisi: önce Groq, sonra OpenAI/Replit AI Integrations
-const AI_ENABLED = !!(process.env.GROQ_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_BASE_URL);
-const AI_MODEL = process.env.GROQ_API_KEY ? 'llama-3.1-8b-instant' : 'gpt-4o-mini';
+// AI istemcisi: Gemini > Groq > OpenAI/Replit AI Integrations
+const AI_ENABLED = !!(
+  process.env.GEMINI_API_KEY ||
+  process.env.GROQ_API_KEY ||
+  process.env.AI_INTEGRATIONS_OPENAI_BASE_URL
+);
+const AI_MODEL = process.env.GEMINI_API_KEY ? 'gemini-2.0-flash'
+  : process.env.GROQ_API_KEY ? 'llama-3.1-8b-instant'
+  : 'gpt-4o-mini';
 const aiClient = new OpenAI({
-  baseURL: process.env.GROQ_API_KEY
-    ? 'https://api.groq.com/openai/v1'
-    : (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1'),
-  apiKey: process.env.GROQ_API_KEY
+  baseURL: process.env.GEMINI_API_KEY
+    ? 'https://generativelanguage.googleapis.com/v1beta/openai/'
+    : process.env.GROQ_API_KEY
+      ? 'https://api.groq.com/openai/v1'
+      : (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1'),
+  apiKey: process.env.GEMINI_API_KEY
+    || process.env.GROQ_API_KEY
     || process.env.AI_INTEGRATIONS_OPENAI_API_KEY
     || 'dummy',
 });
 if (AI_ENABLED) {
-  console.log(`✅ AI aktif — ${process.env.GROQ_API_KEY ? 'Groq (' + AI_MODEL + ')' : 'OpenAI (' + AI_MODEL + ')'}`);
+  const src = process.env.GEMINI_API_KEY ? 'Google Gemini'
+    : process.env.GROQ_API_KEY ? 'Groq' : 'OpenAI';
+  console.log(`✅ AI aktif — ${src} (${AI_MODEL})`);
 } else {
-  console.log('⚠️  AI devre dışı — GROQ_API_KEY veya AI_INTEGRATIONS_OPENAI_BASE_URL ayarlanmamış');
+  console.log('⚠️  AI devre dışı — GEMINI_API_KEY, GROQ_API_KEY veya AI_INTEGRATIONS_OPENAI_BASE_URL ayarlanmamış');
 }
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -1028,10 +1039,10 @@ async function summarizeNewsDetailed(title, description, articleBody = null) {
       const t = norm(title), tx = norm(text);
       return tx === t || tx.startsWith(t) || t.startsWith(tx) || (tx.includes(t) && tx.length < t.length + 30);
     };
-    const best = bodyText.length > 80 && !isTitleRepeat(bodyText) ? bodyText.slice(0, 800)
-                : inputText.length > 20 && !isTitleRepeat(inputText) ? inputText.slice(0, 800)
-                : null;
-    return best;
+    // Makale gövdesi > og:description > null (başlık tekrarı hiçbir zaman dönme)
+    if (bodyText.length > 80 && !isTitleRepeat(bodyText)) return bodyText.slice(0, 800);
+    if (inputText.length > 40 && !isTitleRepeat(inputText)) return inputText.slice(0, 800);
+    return null;
   }
   try {
     const prompt = fullContent
