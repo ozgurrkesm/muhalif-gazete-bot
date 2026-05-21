@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.5 — Cloudflare AI + LoremFlickr fallback — 2026-05-21');
+console.log('🤖 Bot v2.6 — /ara görsel+AI özeti düzeltmesi — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -876,16 +876,19 @@ function extractMedia(item) {
 // ─── og:image Çekici ──────────────────────────────────────────────────────────
 
 function fetchOgMeta(url, redirectCount = 0) {
-  if (redirectCount > 3) return Promise.resolve({ image: null, description: null });
+  if (redirectCount > 5) return Promise.resolve({ image: null, description: null });
   return new Promise((resolve) => {
     let settled = false;
     const done = (val) => { if (!settled) { settled = true; resolve(val); } };
-    const timer = setTimeout(() => done({ image: null, description: null }), 7000);
+    const timer = setTimeout(() => done({ image: null, image2: null, description: null, articleBody: null }), 12000);
     const mod = url.startsWith('https') ? https : http;
     const req = mod.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Accept-Encoding': 'identity',
+        'Cache-Control': 'no-cache',
       },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -944,7 +947,7 @@ function fetchOgMeta(url, redirectCount = 0) {
       res.on('error', () => { clearTimeout(timer); done({ image: null, description: null }); });
     });
     req.on('error', () => { clearTimeout(timer); done({ image: null, description: null }); });
-    req.setTimeout(6000, () => { req.destroy(); clearTimeout(timer); done({ image: null, description: null }); });
+    req.setTimeout(11000, () => { req.destroy(); clearTimeout(timer); done({ image: null, image2: null, description: null, articleBody: null }); });
   });
 }
 
@@ -1147,8 +1150,9 @@ function wikiImage(term) {
   });
 }
 
-// ─── Türkçe → İngilizce anahtar kelime çevirisi (Unsplash için) ──────────────
+// ─── Türkçe → İngilizce anahtar kelime çevirisi (LoremFlickr için) ──────────────
 const TR_EN_MAP = {
+  // Ekonomi & Finans
   'ekonomi':'economy','siyaset':'politics','spor':'sports','futbol':'football',
   'seçim':'election','deprem':'earthquake','savaş':'war','teknoloji':'technology',
   'sağlık':'health','eğitim':'education','para':'money','borsa':'stock market',
@@ -1157,13 +1161,35 @@ const TR_EN_MAP = {
   'iklim':'climate','çevre':'nature','uçak':'airplane','tren':'train',
   'asker':'military','ordu':'military','polis':'police','suç':'crime',
   'turizm':'tourism','konut':'housing','inşaat':'construction','tarım':'agriculture',
-  'ithalat':'import','ihracat':'export','enflasyon':'inflation','faiz':'interest rate',
+  'ithalat':'import','ihracat':'export','enflasyon':'inflation','faiz':'interest',
   'türkiye':'turkey','istanbul':'istanbul','ankara':'ankara','erdoğan':'president',
   'müzik':'music','sanat':'art','film':'film','kitap':'book','bilim':'science',
-  'uzay':'space','yapay':'artificial intelligence','zeka':'intelligence',
+  'uzay':'space','yapay':'technology','zeka':'intelligence',
   'bitcoin':'bitcoin','kripto':'cryptocurrency','sosyal':'social media',
-  'galatasaray':'football stadium','fenerbahçe':'football','beşiktaş':'football',
-  'trabzonspor':'football','maç':'football match','gol':'goal','transfer':'transfer',
+  'galatasaray':'football','fenerbahçe':'football','beşiktaş':'football',
+  'trabzonspor':'football','maç':'football','gol':'goal','transfer':'transfer',
+  // Ek kelimeler
+  'cumhurbaşkanı':'president','bakan':'minister','hükümet':'government',
+  'muhalefet':'opposition','parti':'politics','milletvekili':'parliament',
+  'tbmm':'parliament','anayasa':'constitution','sandık':'election',
+  'gözaltı':'police','tutuklama':'arrest','dava':'court','yargı':'justice',
+  'ukrayna':'ukraine','rusya':'russia','gazze':'war','filistin':'palestine',
+  'israil':'israel','nato':'military','abd':'usa','çin':'china',
+  'almanya':'germany','fransa':'france','ingiltere':'england',
+  'döviz':'currency','kredi':'credit','bütçe':'budget','vergi':'tax',
+  'işsizlik':'unemployment','büyüme':'growth','ihale':'business',
+  'hastane':'hospital','doktor':'doctor','aşı':'vaccine','ilaç':'medicine',
+  'deprem':'earthquake','tsunami':'tsunami','kasırga':'hurricane',
+  'basketbol':'basketball','tenis':'tennis','olimpiyat':'olympic',
+  'şampiyon':'champion','kupa':'trophy','liga':'league','stadyum':'stadium',
+  'kanal':'channel','gazete':'newspaper','haber':'news','basın':'press',
+  'sermaye':'capital','yatırım':'investment','şirket':'company','fabrika':'factory',
+  'çiftçi':'farmer','köy':'village','şehir':'city','istanbul':'istanbul',
+  'mülteci':'refugee','göçmen':'immigrant','sınır':'border',
+  'enerji':'energy','doğalgaz':'gas','elektrik':'electricity','nükleer':'nuclear',
+  'iklim':'climate','orman':'forest','deniz':'sea','hava':'weather',
+  'okul':'school','üniversite':'university','öğrenci':'student','öğretmen':'teacher',
+  'emekli':'retirement','maaş':'salary','işçi':'worker','grev':'strike',
 };
 
 function translateKeywordsToEn(keywords) {
@@ -1173,36 +1199,41 @@ function translateKeywordsToEn(keywords) {
 // ─── LoremFlickr — ücretsiz, API anahtarsız, konuyla alakalı HD fotoğraf ─────
 function _flickrFetch(term) {
   return new Promise((resolve) => {
-    const url = `https://loremflickr.com/1920/1080/${encodeURIComponent(term)}`;
+    const url = `https://loremflickr.com/1280/720/${encodeURIComponent(term)}`;
     const req = https.request(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
       res.destroy();
+      // LoremFlickr redirect ile gerçek Flickr CDN URL'sine yönlendirir
       const loc = res.headers['location'] || '';
       if (!loc) return resolve(null);
       const direct = loc.startsWith('http') ? loc : `https://loremflickr.com${loc}`;
-      if (direct.match(/\.(jpg|jpeg|png|webp)/i) && !direct.includes('defaultImage')) {
+      // staticflickr.com veya .jpg/.jpeg/.png içeriyorsa geçerli kabul et
+      const isFlickrCdn = direct.includes('staticflickr.com') || direct.includes('live.staticflickr.com');
+      const hasImageExt = /\.(jpg|jpeg|png|webp)/i.test(direct);
+      if (isFlickrCdn || hasImageExt) {
         resolve(direct);
       } else {
         resolve(null);
       }
     });
     req.on('error', () => resolve(null));
-    req.setTimeout(7000, () => { req.destroy(); resolve(null); });
+    req.setTimeout(8000, () => { req.destroy(); resolve(null); });
     req.end();
   });
 }
 
 async function fetchLoremFlickrImage(query) {
   const rawKws = extractKeywords(query);
-  // Sadece TR_EN_MAP'teki kelimeleri İngilizceye çevir; eşleşmeyenleri atla
+  // TR_EN_MAP'te bulunanları İngilizceye çevir; bulunamayanları da dene (özel isimler için)
   const enKws = rawKws
-    .map(k => TR_EN_MAP[k.toLowerCase()])
+    .map(k => TR_EN_MAP[k.toLowerCase()] || (k.length > 3 ? k : null))
     .filter(Boolean);
 
   // Denenecek terimler: çift kelime → tek kelime → jenerik fallback'ler
   const candidates = [];
   if (enKws.length >= 2) candidates.push(enKws.slice(0, 2).join(','));
   if (enKws.length >= 1) candidates.push(enKws[0]);
-  candidates.push('turkey,news', 'news,politics', 'newspaper');
+  if (enKws.length >= 3) candidates.push(enKws[1]);
+  candidates.push('turkey,news', 'news', 'newspaper', 'politics');
 
   for (const term of candidates) {
     const img = await _flickrFetch(term).catch(() => null);
@@ -3581,17 +3612,20 @@ bot.on('callback_query', async (query) => {
         return fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null }));
       });
 
-      // 4 şey tamamen paralel: URL çözme, og:image (URL'ye zincirli), DDG resmi, AI özeti
-      const [realUrl, ogMeta, fallbackImage, aiSummary] = await Promise.all([
+      // 3 şey paralel: URL çözme, og:image (URL'ye zincirli), DDG resmi
+      const [realUrl, ogMeta, fallbackImage] = await Promise.all([
         urlPromise,
         ogMetaPromise,
         rssImage ? Promise.resolve(rssImage) : fetchDuckDuckGoImage(title).catch(() => null),
-        summarizeNewsDetailed(title, baseDesc, null).catch(() => null),
       ]);
 
       // Resim önceliği: RSS → og:image → og:image2 → Wikipedia/LoremFlickr
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
       const description = ogMeta.description || baseDesc;
+
+      // AI özeti: ogMeta.articleBody artık mevcut — sayfadan çekilen içerikle özetle
+      const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
+
       console.log(`✅ [ara] Tamamlandı — imageUrl=${imageUrl ? imageUrl.slice(0,60) : 'null'} | aiSummary=${aiSummary ? aiSummary.slice(0,40)+'…' : 'null'}`);
       return { imageUrl, description, aiSummary };
     };
