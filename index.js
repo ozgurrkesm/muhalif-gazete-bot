@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.9 — /ara paralel fetch: kaynak site og:meta artık timeout yaşatmıyor — 2026-05-21');
+console.log('🤖 Bot v2.10 — /ara görsel buffer indirme: Wikipedia 429 sorunu çözüldü — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -956,6 +956,45 @@ async function fetchOgImage(url) {
   return meta.image;
 }
 
+// Görseli Railway sunucusunda buffer'a indir — Wikipedia/Wikimedia gibi
+// Telegram URL'si engelleyen sitelerde buffer ile gönderiyoruz
+function downloadImageBuffer(url, redirectCount = 0) {
+  if (redirectCount > 5) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => { if (!settled) { settled = true; resolve(v); } };
+    const timer = setTimeout(() => done(null), 15000);
+    const mod = url.startsWith('https') ? https : http;
+    mod.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'image/*,*/*;q=0.8',
+        'Referer': 'https://www.google.com/',
+      }
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.destroy(); clearTimeout(timer);
+        const loc = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, url).href;
+        downloadImageBuffer(loc, redirectCount + 1).then(done);
+        return;
+      }
+      if (res.statusCode !== 200) { res.destroy(); clearTimeout(timer); done(null); return; }
+      const ct = res.headers['content-type'] || '';
+      if (!ct.startsWith('image/')) { res.destroy(); clearTimeout(timer); done(null); return; }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => {
+        clearTimeout(timer);
+        const buf = Buffer.concat(chunks);
+        if (buf.length < 1000) { done(null); return; } // çok küçük → geçersiz
+        const ext = ct.includes('png') ? 'png' : ct.includes('gif') ? 'gif' : ct.includes('webp') ? 'webp' : 'jpg';
+        done({ buffer: buf, filename: `image.${ext}`, contentType: ct });
+      });
+      res.on('error', () => { clearTimeout(timer); done(null); });
+    }).on('error', () => { clearTimeout(timer); done(null); });
+  });
+}
+
 // ─── AI Özetleme ──────────────────────────────────────────────────────────────
 
 function isGarbageText(text) {
@@ -1368,13 +1407,19 @@ async function fetchSerperImage(query) {
   });
 }
 
-// ─── Ana resim arama: Serper → og:image → Wikipedia → Unsplash(Full HD) ──────
+// ─── Ana resim arama: Serper → LoremFlickr → Wikipedia ──────────────────────
+// NOT: Wikipedia URL'leri Telegram sunucularında 429 alıyor — LoremFlickr önce gelir
 async function fetchDuckDuckGoImage(query) {
   // 1. Serper.dev (Google Images) — SERPER_API_KEY varsa önce bunu dene
   const serperImg = await fetchSerperImage(query).catch(() => null);
   if (serperImg) return serperImg;
 
-  // 2. Wikipedia REST API — paralel kelime araması
+  // 2. LoremFlickr — Telegram ile %100 uyumlu (staticflickr CDN), ücretsiz, hızlı
+  //    Wikipedia'dan ÖNCE çünkü Wikipedia CDN Telegram botlarını 429 ile reddediyor
+  const flickrImg = await fetchLoremFlickrImage(query).catch(() => null);
+  if (flickrImg) { console.log(`🖼 LoremFlickr: ${flickrImg.slice(0, 80)}`); return flickrImg; }
+
+  // 3. Wikipedia REST API — fallback (Telegram 429 alırsa buffer indirme denenir)
   const keywords = extractKeywords(query);
   if (keywords.length) {
     const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
@@ -1382,11 +1427,7 @@ async function fetchDuckDuckGoImage(query) {
     if (wikiImg) { console.log(`🖼 Wikipedia: ${wikiImg.slice(0, 80)}`); return wikiImg; }
   }
 
-  // 3. LoremFlickr — konuyla alakalı Full HD fotoğraf (ücretsiz, API anahtarsız)
-  const flickrImg = await fetchLoremFlickrImage(query).catch(() => null);
-  if (flickrImg) return flickrImg;
-
-  console.log(`⚠️ Hiçbir kaynaktan resim bulunamadı: "${keywords.join(', ')}"`);
+  console.log(`⚠️ Hiçbir kaynaktan resim bulunamadı: "${query.slice(0, 60)}"`);
   return null;
 }
 
@@ -3783,20 +3824,38 @@ bot.on('callback_query', async (query) => {
     // Kanala gönder — resimli dene, başarısız olursa metin olarak gönder
     let sent = false;
     if (imageUrl) {
-      // Önce MarkdownV2 ile dene
+      // Görseli önce Railway'de buffer'a indir:
+      // Wikipedia/Wikimedia Telegram sunucularını 429 ile reddediyor —
+      // biz indirip buffer olarak gönderirsek bu sorunu atlarız.
+      console.log(`📥 [ara] Görsel indiriliyor: ${imageUrl.slice(0, 80)}`);
+      const imgBuffer = await downloadImageBuffer(imageUrl).catch(() => null);
+      const photoPayload = imgBuffer ? imgBuffer.buffer : imageUrl;
+      const photoOptions = imgBuffer ? { filename: imgBuffer.filename, contentType: imgBuffer.contentType } : {};
+      console.log(`📤 [ara] Telegram'a gönderiliyor: ${imgBuffer ? 'buffer(' + imgBuffer.buffer.length + 'b)' : 'URL'}`);
+
       try {
-        const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption, parse_mode: 'Markdown' });
+        const sentMsg = await bot.sendPhoto(CHANNEL_ID, photoPayload, { caption, parse_mode: 'Markdown', ...photoOptions });
         registerSentMessage(sentMsg.message_id, title);
         sent = true;
       } catch (e1) {
         // Markdown hatası olabilir — parse_mode olmadan dene
         try {
-          const plainCaption = caption.replace(/[*_[]]/g, '');
-          const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption: plainCaption });
+          const plainCaption = caption.replace(/[*_[\]]/g, '');
+          const sentMsg = await bot.sendPhoto(CHANNEL_ID, photoPayload, { caption: plainCaption, ...photoOptions });
           registerSentMessage(sentMsg.message_id, title);
           sent = true;
         } catch (e2) {
           console.error('❌ sendPhoto başarısız:', e2?.message);
+          // Buffer başarısız olduysa ham URL ile son bir deneme
+          if (imgBuffer) {
+            try {
+              const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption: caption.replace(/[*_[\]]/g, '') });
+              registerSentMessage(sentMsg.message_id, title);
+              sent = true;
+            } catch (e3) {
+              console.error('❌ sendPhoto URL fallback başarısız:', e3?.message);
+            }
+          }
         }
       }
     }
