@@ -2340,17 +2340,15 @@ async function publishNowInstant() {
           tgLog(`🔗 → ${realUrl.slice(0, 80)}`);
         }
 
-        // ═══ OG meta + DDG resim + AI özeti — hepsini aynı anda başlat ═══
-        tgLog(`🖼 Görsel & özet paralel aranıyor...`);
+        // ═══ OG meta + DDG resim paralel çek ═══════════════════════════
+        tgLog(`🖼 Görsel aranıyor...`);
         const rssMedia = extractMedia(item);
-        const [ogMeta, _ddgEarly, aiSEarly] = await Promise.all([
+        const [ogMeta, ddgImgPrefetch] = await Promise.all([
           fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
-          fetchDuckDuckGoImage(title).then(r => { _autoPublishDdg = r; }).catch(() => {}),
-          summarizeNews(title, rawDesc || description, null).catch(() => null),
+          fetchDuckDuckGoImage(title).catch(() => null),
         ]);
-        let _autoPublishDdg = _autoPublishDdg || null;
         // Caption oluştur
-        { const bestD = ogMeta.description || rawDesc || description; const aiS = aiSEarly || await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
+        { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
         if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
         let ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
         const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
@@ -2391,7 +2389,7 @@ async function publishNowInstant() {
 
         // ═══ 5. Görsel yok → DuckDuckGo → atla (metin ASLA) ════════════
           if (sentType === 'none') {
-            const ddgImg = _autoPublishDdg || await fetchDuckDuckGoImage(title).catch(() => null);
+            const ddgImg = ddgImgPrefetch || await fetchDuckDuckGoImage(title).catch(() => null);
             if (ddgImg) tgLog('🔎 DDG görseli kullanılıyor: ' + title.slice(0,40));
             if (ddgImg) {
               try {
