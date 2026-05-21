@@ -3464,25 +3464,59 @@ bot.on('callback_query', async (query) => {
     if (aiSummary && !summaryIsTitle && aiSummary.length > 30) caption += `\n\n${cleanArrows(aiSummary)}`;
     caption = caption.slice(0, 1024);
 
-    // Kanala gönder
+    // Başlıktaki Markdown özel karakterleri (*, _, [, ]) escape et
+    const escMd = (s) => (s || '').replace(/([*_[]()~`>#+\-=|{}.!])/g, '\\$1');
+    const safeTitle = escMd(title);
+    const safeCaption = caption
+      .replace(`*${title}*`, `*${safeTitle}*`);
+
+    // Kanala gönder — resimli dene, başarısız olursa metin olarak gönder
     let sent = false;
     if (imageUrl) {
+      // Önce MarkdownV2 ile dene
       try {
         const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption, parse_mode: 'Markdown' });
         registerSentMessage(sentMsg.message_id, title);
         sent = true;
-      } catch {}
+      } catch (e1) {
+        // Markdown hatası olabilir — parse_mode olmadan dene
+        try {
+          const plainCaption = caption.replace(/[*_[]]/g, '');
+          const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption: plainCaption });
+          registerSentMessage(sentMsg.message_id, title);
+          sent = true;
+        } catch (e2) {
+          console.error('❌ sendPhoto başarısız:', e2?.message);
+        }
+      }
     }
     if (!sent) {
-      const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: true });
-      registerSentMessage(sentMsg.message_id, title);
-      sent = true;
+      // Resim yoksa veya başarısız olduysa metin olarak gönder
+      try {
+        const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: true });
+        registerSentMessage(sentMsg.message_id, title);
+        sent = true;
+      } catch {
+        try {
+          // Markdown başarısız — düz metin dene
+          const plainCaption = caption.replace(/[*_[]]/g, '');
+          const sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: true });
+          registerSentMessage(sentMsg.message_id, title);
+          sent = true;
+        } catch (e3) {
+          console.error('❌ sendMessage başarısız:', e3?.message);
+        }
+      }
     }
 
     if (sent) {
       publishedUrls.add(link);
       persistPublishedUrls();
       await bot.editMessageText(`✅ Haber kanala yayınlandı!\n\n📰 ${title}`, {
+        chat_id: chatId, message_id: msgId
+      }).catch(() => {});
+    } else {
+      await bot.editMessageText(`❌ Haber gönderilemedi.\n\nBaşlık: ${title.slice(0, 100)}\n\nHata: Kanal erişim sorunu olabilir — bot kanalda admin mi?`, {
         chat_id: chatId, message_id: msgId
       }).catch(() => {});
     }
