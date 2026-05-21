@@ -1153,26 +1153,29 @@ function translateKeywordsToEn(keywords) {
   return keywords.map(k => TR_EN_MAP[k.toLowerCase()] || k).slice(0, 3);
 }
 
-// ─── Unsplash Source API — ücretsiz, API anahtarsız, Full HD ─────────────────
-async function fetchUnsplashImage(query) {
+// ─── LoremFlickr — ücretsiz, API anahtarsız, konuyla alakalı HD fotoğraf ─────
+async function fetchLoremFlickrImage(query) {
   const rawKws = extractKeywords(query);
   if (!rawKws.length) return null;
   const enKws = translateKeywordsToEn(rawKws);
-  const term  = enKws.join(',');
-  const sourceUrl = `https://source.unsplash.com/1920x1080/?${encodeURIComponent(term)}`;
+  const term  = enKws.slice(0, 2).join(',');
+  const sourceUrl = `https://loremflickr.com/1920/1080/${encodeURIComponent(term)}`;
   return new Promise((resolve) => {
     let done = false;
     const finish = (v) => { if (!done) { done = true; resolve(v); } };
-    const timer = setTimeout(() => finish(null), 6000);
-    const req = https.request(sourceUrl, { method: 'HEAD' }, (res) => {
+    const timer = setTimeout(() => finish(null), 8000);
+    const req = https.request(sourceUrl, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
       clearTimeout(timer);
+      res.destroy();
       const loc = res.headers['location'] || '';
-      if (loc && loc.startsWith('https://images.unsplash.com')) {
-        const direct = loc.split('?')[0] + '?w=1920&h=1080&fit=crop&q=85&auto=format';
-        console.log(`🖼 Unsplash (${enKws.join(',')}): ${direct.slice(0, 80)}`);
-        finish(direct);
-      } else if (res.statusCode >= 200 && res.statusCode < 300) {
-        finish(sourceUrl);
+      if (loc) {
+        const direct = loc.startsWith('http') ? loc : `https://loremflickr.com${loc}`;
+        if (direct.match(/\.(jpg|jpeg|png|webp)/i)) {
+          console.log(`🖼 LoremFlickr (${enKws.join(',')}): ${direct.slice(0, 80)}`);
+          finish(direct);
+        } else {
+          finish(null);
+        }
       } else {
         finish(null);
       }
@@ -1225,9 +1228,9 @@ async function fetchDuckDuckGoImage(query) {
     if (wikiImg) { console.log(`🖼 Wikipedia: ${wikiImg.slice(0, 80)}`); return wikiImg; }
   }
 
-  // 3. Unsplash Source API — konuyla alakalı Full HD fotoğraf (ücretsiz, API anahtarsız)
-  const unsplashImg = await fetchUnsplashImage(query).catch(() => null);
-  if (unsplashImg) return unsplashImg;
+  // 3. LoremFlickr — konuyla alakalı Full HD fotoğraf (ücretsiz, API anahtarsız)
+  const flickrImg = await fetchLoremFlickrImage(query).catch(() => null);
+  if (flickrImg) return flickrImg;
 
   console.log(`⚠️ Hiçbir kaynaktan resim bulunamadı: "${keywords.join(', ')}"`);
   return null;
@@ -3530,13 +3533,18 @@ bot.on('callback_query', async (query) => {
 
     // DDG resim araması ve URL çözme'yi paralel başlat
     const baseDesc = item.contentSnippet || item.summary || '';
+
+    // RSS item'ın kendi resmi var mı? (enclosure, media:content vs.)
+    const rssMedia = extractMedia(item);
+    const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
+
     const fetchData = async () => {
-      // DDG araması + URL çözme aynı anda başlasın
+      // URL çözme + DDG araması aynı anda başlasın
       const [realUrl, ddgImage] = await Promise.all([
         (link.includes('news.google.com')
           ? resolveGoogleNewsUrl(link).catch(() => null)
           : Promise.resolve(null)).then(r => r || link),
-        fetchDuckDuckGoImage(title).catch(() => null),
+        rssImage ? Promise.resolve(null) : fetchDuckDuckGoImage(title).catch(() => null),
       ]);
 
       // OG meta + AI özeti aynı anda çalışsın
@@ -3545,8 +3553,9 @@ bot.on('callback_query', async (query) => {
         summarizeNewsDetailed(title, baseDesc, null).catch(() => null),
       ]);
 
-      // Resim önceliği: og:image → og:image:secure_url → DDG
-      const imageUrl = ogMeta.image || ogMeta.image2 || ddgImage;
+      // Resim önceliği: RSS resmi → og:image → og:image2 → DDG/Wiki/LoremFlickr
+      const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || ddgImage
+        || await fetchDuckDuckGoImage(title).catch(() => null);
       const description = ogMeta.description || baseDesc;
       return { imageUrl, description, aiSummary };
     };
