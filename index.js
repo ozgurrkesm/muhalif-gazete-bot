@@ -1169,50 +1169,47 @@ function translateKeywordsToEn(keywords) {
 }
 
 // ─── LoremFlickr — ücretsiz, API anahtarsız, konuyla alakalı HD fotoğraf ─────
-async function fetchLoremFlickrImage(query) {
-  const rawKws = extractKeywords(query);
-  if (!rawKws.length) return null;
-  const enKws = translateKeywordsToEn(rawKws);
-  const term  = enKws.slice(0, 2).join(',');
-  const sourceUrl = `https://loremflickr.com/1920/1080/${encodeURIComponent(term)}`;
+function _flickrFetch(term) {
   return new Promise((resolve) => {
-    let done = false;
-    const finish = (v) => { if (!done) { done = true; resolve(v); } };
-    const timer = setTimeout(() => finish(null), 8000);
-    const req = https.request(sourceUrl, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
-      clearTimeout(timer);
+    const url = `https://loremflickr.com/1920/1080/${encodeURIComponent(term)}`;
+    const req = https.request(url, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res) => {
       res.destroy();
       const loc = res.headers['location'] || '';
-      if (loc) {
-        const direct = loc.startsWith('http') ? loc : `https://loremflickr.com${loc}`;
-        // defaultImage = Flickr'da eşleşme bulunamadı, atla
-        if (direct.match(/\.(jpg|jpeg|png|webp)/i) && !direct.includes('defaultImage')) {
-          console.log(`🖼 LoremFlickr (${enKws.join(',')}): ${direct.slice(0, 80)}`);
-          finish(direct);
-        } else {
-          // Tek kelimeyle tekrar dene
-          const single = enKws[0];
-          if (single && single !== term) {
-            const req2 = https.request(`https://loremflickr.com/1920/1080/${encodeURIComponent(single)}`, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res2) => {
-              res2.destroy();
-              const loc2 = res2.headers['location'] || '';
-              const d2 = loc2.startsWith('http') ? loc2 : `https://loremflickr.com${loc2}`;
-              if (d2.match(/\.(jpg|jpeg|png|webp)/i) && !d2.includes('defaultImage')) {
-                console.log(`🖼 LoremFlickr single (${single}): ${d2.slice(0, 80)}`);
-                finish(d2);
-              } else { finish(null); }
-            });
-            req2.on('error', () => finish(null));
-            req2.end();
-          } else { finish(null); }
-        }
+      if (!loc) return resolve(null);
+      const direct = loc.startsWith('http') ? loc : `https://loremflickr.com${loc}`;
+      if (direct.match(/\.(jpg|jpeg|png|webp)/i) && !direct.includes('defaultImage')) {
+        resolve(direct);
       } else {
-        finish(null);
+        resolve(null);
       }
     });
-    req.on('error', () => { clearTimeout(timer); finish(null); });
+    req.on('error', () => resolve(null));
+    req.setTimeout(7000, () => { req.destroy(); resolve(null); });
     req.end();
   });
+}
+
+async function fetchLoremFlickrImage(query) {
+  const rawKws = extractKeywords(query);
+  // Sadece TR_EN_MAP'teki kelimeleri İngilizceye çevir; eşleşmeyenleri atla
+  const enKws = rawKws
+    .map(k => TR_EN_MAP[k.toLowerCase()])
+    .filter(Boolean);
+
+  // Denenecek terimler: çift kelime → tek kelime → jenerik fallback'ler
+  const candidates = [];
+  if (enKws.length >= 2) candidates.push(enKws.slice(0, 2).join(','));
+  if (enKws.length >= 1) candidates.push(enKws[0]);
+  candidates.push('turkey,news', 'news,politics', 'newspaper');
+
+  for (const term of candidates) {
+    const img = await _flickrFetch(term).catch(() => null);
+    if (img) {
+      console.log(`🖼 LoremFlickr (${term}): ${img.slice(0, 80)}`);
+      return img;
+    }
+  }
+  return null;
 }
 
 // ─── Serper.dev Google Images API (SERPER_API_KEY varsa) ─────────────────────
@@ -3569,17 +3566,23 @@ bot.on('callback_query', async (query) => {
     const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
 
     const fetchData = async () => {
-      // Hepsi paralel başlasın: URL çözme + resim arama + AI özeti
-      const [realUrl, fallbackImage, aiSummary] = await Promise.all([
-        (link.includes('news.google.com')
-          ? resolveGoogleNewsUrl(link).catch(() => null)
-          : Promise.resolve(null)).then(r => r || link),
+      // URL çözmeyi hemen başlat
+      const urlPromise = (link.includes('news.google.com')
+        ? resolveGoogleNewsUrl(link).catch(() => null)
+        : Promise.resolve(null)).then(r => r || link);
+
+      // og:image — URL hazır olur olmaz başlasın (DDG'yi beklemesin)
+      const ogMetaPromise = urlPromise.then(url =>
+        fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null }))
+      );
+
+      // 4 şey tamamen paralel: URL çözme, og:image (URL'ye zincirli), DDG resmi, AI özeti
+      const [realUrl, ogMeta, fallbackImage, aiSummary] = await Promise.all([
+        urlPromise,
+        ogMetaPromise,
         rssImage ? Promise.resolve(rssImage) : fetchDuckDuckGoImage(title).catch(() => null),
         summarizeNewsDetailed(title, baseDesc, null).catch(() => null),
       ]);
-
-      // og:image çek (gerçek URL elde edildikten sonra)
-      const ogMeta = await fetchOgMeta(realUrl).catch(() => ({ image: null, image2: null, description: null }));
 
       // Resim önceliği: RSS → og:image → og:image2 → Wikipedia/LoremFlickr
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
