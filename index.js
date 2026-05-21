@@ -140,6 +140,8 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
+console.log('🤖 Bot v2.5 — Cloudflare AI + LoremFlickr fallback — 2026-05-21');
+
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
   process.exit(1);
@@ -3566,15 +3568,18 @@ bot.on('callback_query', async (query) => {
     const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
 
     const fetchData = async () => {
+      console.log(`🔍 [ara] Başlıyor: "${title.slice(0,60)}" | rssImage=${!!rssImage} | link=${link.slice(0,60)}`);
+
       // URL çözmeyi hemen başlat
       const urlPromise = (link.includes('news.google.com')
         ? resolveGoogleNewsUrl(link).catch(() => null)
         : Promise.resolve(null)).then(r => r || link);
 
       // og:image — URL hazır olur olmaz başlasın (DDG'yi beklemesin)
-      const ogMetaPromise = urlPromise.then(url =>
-        fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null }))
-      );
+      const ogMetaPromise = urlPromise.then(url => {
+        console.log(`🌐 [ara] og:image çekiliyor: ${url.slice(0,80)}`);
+        return fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null }));
+      });
 
       // 4 şey tamamen paralel: URL çözme, og:image (URL'ye zincirli), DDG resmi, AI özeti
       const [realUrl, ogMeta, fallbackImage, aiSummary] = await Promise.all([
@@ -3587,6 +3592,7 @@ bot.on('callback_query', async (query) => {
       // Resim önceliği: RSS → og:image → og:image2 → Wikipedia/LoremFlickr
       const imageUrl = rssImage || ogMeta.image || ogMeta.image2 || fallbackImage || null;
       const description = ogMeta.description || baseDesc;
+      console.log(`✅ [ara] Tamamlandı — imageUrl=${imageUrl ? imageUrl.slice(0,60) : 'null'} | aiSummary=${aiSummary ? aiSummary.slice(0,40)+'…' : 'null'}`);
       return { imageUrl, description, aiSummary };
     };
 
