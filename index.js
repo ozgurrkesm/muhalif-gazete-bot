@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.7 — /ara kaynak site görseli + TR_EN_MAP genişletme — 2026-05-21');
+console.log('🤖 Bot v2.8 — /ara başlıktan kaynak domain çıkarma + SOURCE_DOMAINS haritası — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -1215,6 +1215,79 @@ const TR_EN_MAP = {
 
 function translateKeywordsToEn(keywords) {
   return keywords.map(k => TR_EN_MAP[k.toLowerCase()] || k).slice(0, 3);
+}
+
+// ─── Kaynak Site Domain Haritası ─────────────────────────────────────────────
+const SOURCE_DOMAINS = {
+  'cumhuriyet':'https://www.cumhuriyet.com.tr',
+  'sözcü':'https://www.sozcu.com.tr','sozcu':'https://www.sozcu.com.tr',
+  't24':'https://t24.com.tr',
+  'odatv':'https://www.odatv.com','oda tv':'https://www.odatv.com',
+  'birgun':'https://www.birgun.net','birgün':'https://www.birgun.net','birgun.net':'https://www.birgun.net',
+  'bianet':'https://bianet.org',
+  'halk tv':'https://halktv.com.tr','halktv':'https://halktv.com.tr',
+  'tele1':'https://www.tele1.com.tr','tele 1':'https://www.tele1.com.tr',
+  'artı gerçek':'https://artigercek.com','arti gercek':'https://artigercek.com',
+  'gazete duvar':'https://www.gazeteduvar.com.tr',
+  'ntv':'https://www.ntv.com.tr','ntv haber':'https://www.ntv.com.tr',
+  'yeniçağ gazetesi':'https://www.yenicaggazetesi.com.tr','yeniçağ':'https://www.yenicaggazetesi.com.tr',
+  'tgrt haber':'https://www.tgrthaber.com.tr','tgrt':'https://www.tgrthaber.com.tr',
+  'haberler.com':'https://www.haberler.com','haberler':'https://www.haberler.com',
+  'milliyet':'https://www.milliyet.com.tr',
+  'hürriyet':'https://www.hurriyet.com.tr','hurriyet':'https://www.hurriyet.com.tr',
+  'sabah':'https://www.sabah.com.tr',
+  'habertürk':'https://www.haberturk.com','haberturk':'https://www.haberturk.com',
+  'a haber':'https://www.ahaber.com.tr','ahaber':'https://www.ahaber.com.tr',
+  'cnn türk':'https://www.cnnturk.com','cnn turk':'https://www.cnnturk.com',
+  'dha':'https://www.dha.com.tr',
+  'aa':'https://www.aa.com.tr','anadolu ajansı':'https://www.aa.com.tr',
+  'krt':'https://www.krttv.com.tr','krt tv':'https://www.krttv.com.tr',
+  'medyascope':'https://medyascope.tv',
+  'diken':'https://www.diken.com.tr',
+  'dokuz8haber':'https://dokuz8haber.net',
+  'sendika.org':'https://www.sendika.org','sendika':'https://www.sendika.org',
+  'evrensel':'https://www.evrensel.net',
+  'gazeteoksijen':'https://gazeteoksijen.com',
+  'haber global':'https://www.haberglobal.com.tr',
+  'fox haber':'https://www.fox.com.tr','fox':'https://www.fox.com.tr',
+  'star':'https://www.star.com.tr',
+  'takvim':'https://www.takvim.com.tr',
+  'yeni şafak':'https://www.yenisafak.com','yeni safak':'https://www.yenisafak.com',
+  'karar':'https://www.karar.com',
+  'bloomberg ht':'https://www.bloomberght.com',
+  'dünya':'https://www.dunya.com',
+  'ekonomim':'https://www.ekonomim.com',
+  'sporx':'https://www.sporx.com',
+  'fanatik':'https://www.fanatik.com.tr',
+  'goal':'https://www.goal.com/tr',
+  'ntv spor':'https://www.ntvspor.net',
+};
+
+// Google News RSS başlığından kaynak site domain'ini çıkar
+// Örn: "Başlık - birgun.net" → "https://www.birgun.net"
+// Örn: "Başlık - Odatv" → "https://www.odatv.com"
+function extractSourceDomain(rawTitle) {
+  if (!rawTitle) return null;
+  // Başlık sonundaki " - Kaynak Adı" kısmını al
+  const match = rawTitle.match(/\s*[-–]\s*([^\-–\n]{2,60}?)\s*$/);
+  if (!match) return null;
+  const sourceName = match[1].trim();
+  const sourceKey = sourceName.toLowerCase();
+
+  // 1. Harita araması (tam eşleşme)
+  if (SOURCE_DOMAINS[sourceKey]) return SOURCE_DOMAINS[sourceKey];
+
+  // 2. Kısmi eşleşme (örn. "Afyon Türkeli Gazetesi" → bulunamaz ama denenir)
+  for (const [k, v] of Object.entries(SOURCE_DOMAINS)) {
+    if (sourceKey.includes(k) || k.includes(sourceKey)) return v;
+  }
+
+  // 3. Direkt domain (birgun.net, odatv.com gibi nokta içeriyorsa)
+  if (/^[a-zA-Z0-9-]+\.[a-zA-Z]{2,6}$/.test(sourceName.replace(/^www\./i, ''))) {
+    return `https://www.${sourceName.replace(/^www\./i, '').toLowerCase()}`;
+  }
+
+  return null;
 }
 
 // ─── LoremFlickr — ücretsiz, API anahtarsız, konuyla alakalı HD fotoğraf ─────
@@ -3619,10 +3692,9 @@ bot.on('callback_query', async (query) => {
     const rssMedia = extractMedia(item);
     const rssImage = rssMedia.type === 'image' ? rssMedia.url : null;
 
-    // RSS item'dan kaynak site URL'sini çıkar (Google News <source url="..."> etiketi)
-    const sourceUrl = (item.source && typeof item.source === 'object' && item.source.url)
-      ? item.source.url
-      : (typeof item.source === 'string' && item.source.startsWith('http') ? item.source : null);
+    // Başlıktan kaynak site domain'ini çıkar: "Başlık - birgun.net" → "https://www.birgun.net"
+    // item.source rss-parser'da text olarak gelir, URL olarak değil — bu yöntem daha güvenilir
+    const sourceUrl = extractSourceDomain(item.title || '');
 
     const fetchData = async () => {
       console.log(`🔍 [ara] Başlıyor: "${title.slice(0,60)}" | rssImage=${!!rssImage} | source=${sourceUrl || 'yok'}`);
@@ -3637,9 +3709,9 @@ bot.on('callback_query', async (query) => {
         const isGoogleNewsUrl = url.includes('news.google.com');
         console.log(`🌐 [ara] og:meta çekiliyor: ${url.slice(0,80)} (googleNews=${isGoogleNewsUrl})`);
         const meta = await fetchOgMeta(url).catch(() => ({ image: null, image2: null, description: null, articleBody: null }));
-        // Google News URL çözülemediyse VE kaynak site biliniyorsa → kaynak siteden dene
+        // Google News URL çözülemediyse → kaynak sitenin anasayfasından og:image al
         if (isGoogleNewsUrl && !meta.image && sourceUrl) {
-          console.log(`🔄 [ara] Kaynak site og:image deneniyor: ${sourceUrl}`);
+          console.log(`🔄 [ara] Kaynak site og:image: ${sourceUrl}`);
           const srcMeta = await fetchOgMeta(sourceUrl).catch(() => ({ image: null, description: null, articleBody: null }));
           return {
             image: srcMeta.image || null,
