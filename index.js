@@ -1170,11 +1170,26 @@ async function fetchLoremFlickrImage(query) {
       const loc = res.headers['location'] || '';
       if (loc) {
         const direct = loc.startsWith('http') ? loc : `https://loremflickr.com${loc}`;
-        if (direct.match(/\.(jpg|jpeg|png|webp)/i)) {
+        // defaultImage = Flickr'da eşleşme bulunamadı, atla
+        if (direct.match(/\.(jpg|jpeg|png|webp)/i) && !direct.includes('defaultImage')) {
           console.log(`🖼 LoremFlickr (${enKws.join(',')}): ${direct.slice(0, 80)}`);
           finish(direct);
         } else {
-          finish(null);
+          // Tek kelimeyle tekrar dene
+          const single = enKws[0];
+          if (single && single !== term) {
+            const req2 = https.request(`https://loremflickr.com/1920/1080/${encodeURIComponent(single)}`, { method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0' } }, (res2) => {
+              res2.destroy();
+              const loc2 = res2.headers['location'] || '';
+              const d2 = loc2.startsWith('http') ? loc2 : `https://loremflickr.com${loc2}`;
+              if (d2.match(/\.(jpg|jpeg|png|webp)/i) && !d2.includes('defaultImage')) {
+                console.log(`🖼 LoremFlickr single (${single}): ${d2.slice(0, 80)}`);
+                finish(d2);
+              } else { finish(null); }
+            });
+            req2.on('error', () => finish(null));
+            req2.end();
+          } else { finish(null); }
         }
       } else {
         finish(null);
