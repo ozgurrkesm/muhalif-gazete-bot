@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.10 — /ara görsel buffer indirme: Wikipedia 429 sorunu çözüldü — 2026-05-21');
+console.log('🤖 Bot v2.11 — /ara sendPhoto sadeleştirildi, LoremFlickr öncelikli — 2026-05-21');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3824,38 +3824,21 @@ bot.on('callback_query', async (query) => {
     // Kanala gönder — resimli dene, başarısız olursa metin olarak gönder
     let sent = false;
     if (imageUrl) {
-      // Görseli önce Railway'de buffer'a indir:
-      // Wikipedia/Wikimedia Telegram sunucularını 429 ile reddediyor —
-      // biz indirip buffer olarak gönderirsek bu sorunu atlarız.
-      console.log(`📥 [ara] Görsel indiriliyor: ${imageUrl.slice(0, 80)}`);
-      const imgBuffer = await downloadImageBuffer(imageUrl).catch(() => null);
-      const photoPayload = imgBuffer ? imgBuffer.buffer : imageUrl;
-      const photoOptions = imgBuffer ? { filename: imgBuffer.filename, contentType: imgBuffer.contentType } : {};
-      console.log(`📤 [ara] Telegram'a gönderiliyor: ${imgBuffer ? 'buffer(' + imgBuffer.buffer.length + 'b)' : 'URL'}`);
-
+      console.log(`📤 [ara] sendPhoto: ${imageUrl.slice(0, 80)}`);
       try {
-        const sentMsg = await bot.sendPhoto(CHANNEL_ID, photoPayload, { caption, parse_mode: 'Markdown', ...photoOptions });
+        const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption, parse_mode: 'Markdown' });
         registerSentMessage(sentMsg.message_id, title);
         sent = true;
       } catch (e1) {
-        // Markdown hatası olabilir — parse_mode olmadan dene
+        console.error('❌ sendPhoto (Markdown):', e1?.message);
+        // Markdown parse hatası olabilir — düz metin dene
         try {
-          const plainCaption = caption.replace(/[*_[\]]/g, '');
-          const sentMsg = await bot.sendPhoto(CHANNEL_ID, photoPayload, { caption: plainCaption, ...photoOptions });
+          const plainCaption = caption.replace(/[*_[\]`]/g, '');
+          const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption: plainCaption });
           registerSentMessage(sentMsg.message_id, title);
           sent = true;
         } catch (e2) {
-          console.error('❌ sendPhoto başarısız:', e2?.message);
-          // Buffer başarısız olduysa ham URL ile son bir deneme
-          if (imgBuffer) {
-            try {
-              const sentMsg = await bot.sendPhoto(CHANNEL_ID, imageUrl, { caption: caption.replace(/[*_[\]]/g, '') });
-              registerSentMessage(sentMsg.message_id, title);
-              sent = true;
-            } catch (e3) {
-              console.error('❌ sendPhoto URL fallback başarısız:', e3?.message);
-            }
-          }
+          console.error('❌ sendPhoto (plain):', e2?.message);
         }
       }
     }
