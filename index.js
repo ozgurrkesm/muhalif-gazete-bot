@@ -1102,20 +1102,23 @@ function wikiImage(term) {
 
     const tryLang = (lang, next) => {
       const url = `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(term)}`;
-      https.get(url, { headers: { 'User-Agent': 'NewsBot/1.0 (telegram; contact@example.com)' } }, (res) => {
-        if (res.statusCode === 404) { res.destroy(); return next ? tryLang(next, null) : finish(null); }
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          res.destroy();
-          // Wikipedia redirect'i → aynı dilde farklı başlık, devam et
-          return next ? tryLang(next, null) : finish(null);
+      https.get(url, { headers: { 'User-Agent': 'Newsbot/1.0 (Telegram news aggregator)' } }, (res) => {
+        if (res.statusCode === 404 || res.statusCode === 400) {
+          res.destroy(); return next ? tryLang(next, null) : finish(null);
+        }
+        if (res.statusCode >= 300 && res.statusCode < 400) {
+          res.destroy(); return next ? tryLang(next, null) : finish(null);
         }
         let d = ''; res.on('data', ch => d += ch);
         res.on('end', () => {
           try {
             const j = JSON.parse(d);
-            const img = j?.originalimage?.source || j?.thumbnail?.source || null;
-            // SVG ve çok küçük görselleri atla
-            if (img && !/\.svg$/i.test(img)) { clearTimeout(timer); return finish(img); }
+            const orig  = j?.originalimage?.source || null;
+            const thumb = j?.thumbnail?.source || null;
+            // Önce SVG olmayan originalimage'i dene (genelde daha büyük)
+            if (orig && !/\.svg$/i.test(orig)) { clearTimeout(timer); return finish(orig); }
+            // Sonra thumbnail — Wikimedia thumbnail'leri .svg.png olabilir, geçerli PNG
+            if (thumb) { clearTimeout(timer); return finish(thumb); }
           } catch {}
           next ? tryLang(next, null) : finish(null);
         });
@@ -1123,21 +1126,52 @@ function wikiImage(term) {
       }).on('error', () => (next ? tryLang(next, null) : finish(null)));
     };
 
-    // TR → EN sıralamasıyla dene
     tryLang('tr', 'en');
   });
 }
 
-// Birden fazla kelimeyi paralel ara, ilk bulunanı döndür
+// ─── Serper.dev Google Images API (SERPER_API_KEY varsa) ─────────────────────
+async function fetchSerperImage(query) {
+  const key = process.env.SERPER_API_KEY;
+  if (!key) return null;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+    setTimeout(() => finish(null), 8000);
+    const body = JSON.stringify({ q: query, num: 5, gl: 'tr', hl: 'tr' });
+    const req = https.request({
+      hostname: 'google.serper.dev', path: '/images', method: 'POST',
+      headers: { 'X-API-KEY': key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    }, (res) => {
+      let d = ''; res.on('data', ch => d += ch);
+      res.on('end', () => {
+        try {
+          const results = JSON.parse(d)?.images || [];
+          const img = results.find(r => r.imageUrl && /https?:/.test(r.imageUrl))?.imageUrl || null;
+          if (img) console.log('✅ Serper resmi:', img.slice(0, 80));
+          finish(img);
+        } catch { finish(null); }
+      });
+      res.on('error', () => finish(null));
+    });
+    req.on('error', () => finish(null));
+    req.write(body); req.end();
+  });
+}
+
+// ─── Ana resim arama: Serper(Google) → Wikipedia → null ──────────────────────
 async function fetchDuckDuckGoImage(query) {
+  // 1. Serper.dev (Google Images) — SERPER_API_KEY varsa önce bunu dene
+  const serperImg = await fetchSerperImage(query).catch(() => null);
+  if (serperImg) return serperImg;
+
+  // 2. Wikipedia REST API — paralel kelime araması
   const keywords = extractKeywords(query);
   if (!keywords.length) return null;
-
-  // Hepsini aynı anda başlat
   const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
   const found = results.find(r => r !== null) || null;
-  if (found) console.log(`🖼 Wikipedia görseli: ${found.slice(0, 80)}`);
-  else console.log(`⚠️ Wikipedia: "${keywords.join(', ')}" için resim bulunamadı`);
+  if (found) console.log(`🖼 Wikipedia: ${found.slice(0, 80)}`);
+  else console.log(`⚠️ Resim bulunamadı: "${keywords.join(', ')}"`);
   return found;
 }
 
