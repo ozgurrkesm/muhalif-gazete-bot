@@ -1249,6 +1249,13 @@ async function fetchSubjectImage(title) {
 
 // ─── Yardımcı Fonksiyonlar ────────────────────────────────────────────────────
 
+function stripNewsSource(title) {
+  // " - Kaynak Adı" veya "| Kaynak" gibi sonekleri kaldır
+  return (title || '')
+    .replace(/\s*[-–|]\s*(Sözcü|T24|Cumhuriyet|Hürriyet|Milliyet|Sabah|HaberTürk|NTV|CNN Türk|TRT|Halk TV|Tele1|BirGün|OdaTV|ANKA|Bianet|Gazete Duvar|Artı Gerçek|KRT|DHA|AA|İHA|Sputnik|BBC|Reuters|AFP|Fox|Fanatik|Sporx|Goal|A Spor)[^|\-]*$/i, '')
+    .trim();
+}
+
 function cleanTitle(title) {
   let t = (title || '').trim();
   // "Gerçek Haber... 19 Mayıs 2026 İlker Karagöz ile Çalar Saat" → sadece "Gerçek Haber"
@@ -3386,7 +3393,7 @@ bot.on('callback_query', async (query) => {
     pendingAraResults.delete(chatId);
 
     const item = items[idx];
-    const title = cleanTitle(item.title || '');
+    const title = stripNewsSource(cleanTitle(item.title || ''));
     const link = item.link || '';
 
     await bot.answerCallbackQuery(query.id, { text: '⏳ Haber hazırlanıyor...' });
@@ -3704,6 +3711,7 @@ bot.onText(/\/filtrelerim/, (msg) => {
 
 // ─── /ara Komutu: Konuya göre web'den haber ara — liste seç, detaylı yayınla ─
 const pendingAraResults = new Map(); // chatId -> haber listesi
+const shownInAraLinks = new Set(); // /ara listesinde gösterilen linkler
 
 bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
   const chatId = msg.chat.id;
@@ -3721,18 +3729,31 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
   try {
     const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(konu)}&hl=tr&gl=TR&ceid=TR:tr`;
     const feed = await parser.parseURL(searchUrl);
-    const items = (feed.items || [])
+    const allItems = (feed.items || [])
       .filter(it => {
         const title = it.title || '';
-        return title.length > 10 && !BLOCKED_TITLE_PATTERNS.some(p => p.test(title));
-      })
-      .slice(0, 5);
+        const link = it.link || '';
+        return title.length > 10
+          && !BLOCKED_TITLE_PATTERNS.some(p => p.test(title))
+          && !publishedUrls.has(link)
+          && !shownInAraLinks.has(link);
+      });
+
+    // Cache'i periyodik temizle (500'den fazlaysa eski yarısını sil)
+    if (shownInAraLinks.size > 500) {
+      const arr = [...shownInAraLinks];
+      arr.slice(0, 250).forEach(l => shownInAraLinks.delete(l));
+    }
+
+    const items = allItems.slice(0, 5);
 
     if (items.length === 0) {
-      await bot.sendMessage(chatId, `❌ "${konu}" için haber bulunamadı.`);
+      await bot.sendMessage(chatId, `❌ "${konu}" için yeni haber bulunamadı. Biraz bekleyip tekrar dene.`);
       return;
     }
 
+    // Gösterilen linkleri işaretle (tekrar çıkmasın)
+    items.forEach(it => shownInAraLinks.add(it.link || ''));
     pendingAraResults.set(String(chatId), items);
 
     const keyboard = items.map((it, i) => [{
@@ -3743,8 +3764,7 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
 
     await bot.sendMessage(
       chatId,
-      `📋 *"${konu}"* için ${items.length} haber bulundu.
-Hangisini kanala yayınlamak istiyorsun?`,
+      `📋 *"${konu}"* için ${items.length} haber bulundu.\nHangisini kanala yayınlamak istiyorsun?`,
       { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
     );
 
