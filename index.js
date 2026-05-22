@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.23 — canli yayin baslik filtresi + 144p CDN duzeltmesi — 2026-05-22');
+console.log('🤖 Bot v2.24 — haber tekrar engeli guclendirildi + ayni gorsel dedupe — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -860,23 +860,24 @@ function normalizeTitle(title) {
     .slice(0, 80);
 }
 
-// Kelime örtüşme benzerlik kontrolü (%60+ aynı kelime = duplicate)
+// Kelime örtüşme benzerlik kontrolü — %65+ aynı kelime = duplicate
 function isSimilarTitle(a, b) {
-  const wordsA = new Set(a.split(' ').filter(w => w.length > 3));
-  const wordsB = new Set(b.split(' ').filter(w => w.length > 3));
+  const stopWords = new Set(['ile','için','bir','bu','da','de','ve','ya','ama','ki','mi','mu','mü','mı','en','bu','şu','ne','var','yok','olan','oldu','olacak','etti','eder','gibi','daha','çok','az','son','ilk','yeni']);
+  const wordsA = new Set(a.split(' ').filter(w => w.length > 3 && !stopWords.has(w)));
+  const wordsB = new Set(b.split(' ').filter(w => w.length > 3 && !stopWords.has(w)));
   if (wordsA.size === 0 || wordsB.size === 0) return false;
   let overlap = 0;
   for (const w of wordsA) { if (wordsB.has(w)) overlap++; }
-  return overlap / Math.min(wordsA.size, wordsB.size) >= 0.45;
+  return overlap / Math.min(wordsA.size, wordsB.size) >= 0.65;
 }
 
-function isTitleDuplicate(title) {
+function isTitleDuplicate(title, { add = true } = {}) {
   const norm = normalizeTitle(title);
   if (publishedTitlesSession.has(norm)) return true;
-  // Benzerlik kontrolü (son 200 başlık)
-  const recent = [...publishedTitlesSession].slice(-200);
+  // Benzerlik kontrolü (son 300 başlık)
+  const recent = [...publishedTitlesSession].slice(-300);
   if (recent.some(t => isSimilarTitle(norm, t))) return true;
-  publishedTitlesSession.add(norm);
+  if (add) publishedTitlesSession.add(norm);
   return false;
 }
 
@@ -1813,6 +1814,25 @@ function sortByNeededMedia(items, needed) {
   const video = items.filter(itemHasVideo);
   const text  = items.filter(it => !itemHasImage(it) && !itemHasVideo(it));
   return [...image, ...video, ...text];
+}
+
+// ─── Görsel URL Normalizer — aynı görsel farklı paramla gelmesin ───────────────
+function normalizeImageUrl(url) {
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    // Boyut, kalite, format parametrelerini at — sadece path kalsın
+    const keepParams = [];
+    for (const [k, v] of u.searchParams) {
+      if (!/^(w|h|width|height|s|size|q|quality|fit|resize|format|thumb|crop|dim|dims)$/i.test(k)) {
+        keepParams.push(k + '=' + v);
+      }
+    }
+    return u.origin + u.pathname + (keepParams.length ? '?' + keepParams.join('&') : '');
+  } catch {
+    // URL parse hatası — query'yi komple at
+    return url.split('?')[0];
+  }
 }
 
 // ─── Canlı Yayın Görseli Filtresi ────────────────────────────────────────────
@@ -2767,11 +2787,12 @@ async function publishNowInstant() {
         // ═══ 4. Resim gönder ════════════════════════════════════════════
         if (sentType === 'none' && ogImg) {
           tgLog(`🖼 Görsel gönderiliyor: ${ogImg.slice(0, 60)}`);
-          if (ogImg2) {
+          const _ogImg2 = ogImg2 && normalizeImageUrl(ogImg2) !== normalizeImageUrl(ogImg) ? ogImg2 : null;
+          if (_ogImg2) {
             try {
               await bot.sendMediaGroup(CHANNEL_ID, [
                 { type: 'photo', media: ogImg, caption },
-                { type: 'photo', media: ogImg2 },
+                { type: 'photo', media: _ogImg2 },
               ]);
               sentType = 'image'; mediaStats.image++;
             } catch (e1) {
@@ -3132,19 +3153,19 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
         }
       }
     } else if (chosenMedia.type === 'image') {
-      // İki görsel varsa media group gönder
-      if (chosenMedia2) {
+      // İki görsel varsa — aynı görselse tek gönder
+      const _img2 = chosenMedia2 && normalizeImageUrl(chosenMedia2) !== normalizeImageUrl(chosenMedia.url) ? chosenMedia2 : null;
+      if (_img2) {
         try {
           const mediaGroup = [
             { type: 'photo', media: chosenMedia.url, caption, parse_mode: undefined },
-            { type: 'photo', media: chosenMedia2 },
+            { type: 'photo', media: _img2 },
           ];
           const msgs = await bot.sendMediaGroup(CHANNEL_ID, mediaGroup, replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {});
           sentMsg = msgs?.[0] || null;
           sentType = 'image';
           console.log('📸📸 İki görsel (media group) gönderildi');
         } catch {
-          // Media group başarısız → tek görsel
           sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
           sentType = 'image';
         }
@@ -3551,10 +3572,11 @@ async function checkBreakingNews() {
             const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
             const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
 
-            if (img1 && img2) {
+            const _img2sd = img2 && normalizeImageUrl(img2) !== normalizeImageUrl(img1) ? img2 : null;
+            if (img1 && _img2sd) {
               try {
                 const msgs = await bot.sendMediaGroup(CHANNEL_ID, [
-                  { type: 'photo', media: img1, caption }, { type: 'photo', media: img2 },
+                  { type: 'photo', media: img1, caption }, { type: 'photo', media: _img2sd },
                 ]);
                 sentMsg = msgs?.[0] || null; sentType = 'image'; mediaStats.image++;
               } catch {
