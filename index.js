@@ -4762,22 +4762,23 @@ bot.on('polling_error', (err) => {
 // ─── Temiz Kapanış ────────────────────────────────────────────────────────────
 
 process.on('SIGTERM', () => {
-  console.log('🛑 SIGTERM alındı, bot durduruluyor...');
-  const shutdown = () => { persistPublishedUrls(); process.exit(0); };
+  // process.exit() ÇAĞIRILMAZ — Railway "always" politikası yeniden başlatmasın.
+  // Polling durdurulur, Railway'in SIGKILL'i beklenir.
+  console.log('🛑 SIGTERM alındı — polling durduruluyor, SIGKILL bekleniyor...');
+  persistPublishedUrls();
   if (WEBHOOK_URL) {
-    bot.deleteWebhook().catch(() => {}).finally(shutdown);
+    bot.deleteWebhook().catch(() => {});
   } else {
-    bot.stopPolling().finally(shutdown);
+    bot.stopPolling().catch(() => {});
   }
+  // Process burada ÖLMEZ — Railway deploy tamamlanınca SIGKILL gönderir
 });
 
 process.on('SIGINT', () => {
-  const shutdown = () => { persistPublishedUrls(); process.exit(0); };
-  if (WEBHOOK_URL) {
-    bot.deleteWebhook().catch(() => {}).finally(shutdown);
-  } else {
-    bot.stopPolling().finally(shutdown);
-  }
+  console.log('🛑 SIGINT alındı, çıkılıyor...');
+  persistPublishedUrls();
+  const stop = WEBHOOK_URL ? bot.deleteWebhook() : bot.stopPolling();
+  stop.catch(() => {}).finally(() => process.exit(0));
 });
 
 // ─── Başlat ───────────────────────────────────────────────────────────────────
