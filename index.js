@@ -4691,9 +4691,20 @@ bot.onText(/\/saglik/, async (msg) => {
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
   });
+let _polling409Timer = null;
 bot.on('polling_error', (err) => {
   trackError('polling', err.message);
   console.error(`⚠️ Polling hatası: ${err.message}`);
+  // 409 = başka instance çalışıyor. Dur, 30sn bekle, yeniden başlat.
+  if (err.message && err.message.includes('409') && !_polling409Timer) {
+    console.log('⏳ 409 algılandı — 30sn bekleniyor (eski instance\'ın ölmesi için)...');
+    bot.stopPolling().catch(() => {});
+    _polling409Timer = setTimeout(() => {
+      _polling409Timer = null;
+      console.log('🔄 Polling yeniden başlatılıyor...');
+      bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
+    }, 30000);
+  }
 });
 
 // ─── Temiz Kapanış ────────────────────────────────────────────────────────────
@@ -4735,37 +4746,12 @@ http.createServer((req, res) => {
   console.log(`✅ HTTP health check: port ${HEALTH_PORT}`);
 });
 
-// Webhook'u direkt Telegram API'ye HTTPS isteğiyle sil, sonra polling başlat
-function deleteWebhookAndStart() {
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: 'api.telegram.org',
-      path: `/bot${BOT_TOKEN}/deleteWebhook?drop_pending_updates=true`,
-      method: 'GET',
-    }, (res) => {
-      let d = '';
-      res.on('data', c => d += c);
-      res.on('end', () => {
-        console.log('🗑 Webhook temizlendi:', d.trim());
-        resolve();
-      });
-    });
-    req.on('error', (e) => {
-      console.warn('⚠️ Webhook silme hatası (devam ediliyor):', e.message);
-      resolve(); // hata olsa bile devam et
-    });
-    req.end();
-  });
-}
-
-deleteWebhookAndStart()
+// Webhook'u _request ile sil (deleteWebhook v0.66'da yok), sonra polling başlat
+bot._request('deleteWebhook', { form: { drop_pending_updates: true } })
   .then(() => {
-    if (typeof bot.startPolling === 'function') {
-      bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
-      console.log('📡 Polling başlatıldı');
-    } else {
-      console.warn('⚠️ startPolling bulunamadı, bot zaten polling yapıyor olabilir');
-    }
+    console.log('🗑 Webhook temizlendi, polling başlatılıyor...');
+    bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
+    console.log('📡 Polling başlatıldı');
     publishNextNews();
     resetInterval();
     startBreakingNewsChecker();
