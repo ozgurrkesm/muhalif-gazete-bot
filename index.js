@@ -3820,52 +3820,51 @@ bot.on('callback_query', async (query) => {
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
 
-      // Düz metin — Markdown yok, parse hatası olmaz
-      let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
-      if (rawDesc && rawDesc.length > 10) text += `\n\n${stripLinks(rawDesc).slice(0, 300)}`;
-      text += `\n\n🔗 ${link}`;
-      text = text.slice(0, 4096);
+      // OG görseli ve açıklaması çek
+      const ogMeta = await fetchOgMeta(link).catch(() => ({}));
+      const bestDesc = ogMeta.description || rawDesc || '';
+      const aiSummary = await summarizeNews(title, bestDesc, ogMeta.articleBody || null).catch(() => null);
 
-      // Doğrudan Telegram API çağrısı — bot kütüphanesi bypass
-      const BOT_TOKEN_VAL = process.env.BOT_TOKEN || '';
-      const apiResult = await new Promise((resolve) => {
-        const body = JSON.stringify({ chat_id: CHANNEL_ID, text, disable_web_page_preview: false });
-        const req = https.request({
-          hostname: 'api.telegram.org',
-          path: `/bot${BOT_TOKEN_VAL}/sendMessage`,
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-        }, (res) => {
-          let d = ''; res.on('data', c => d += c); res.on('end', () => {
-            try { resolve(JSON.parse(d)); } catch { resolve({ ok: false, description: 'JSON parse hatası' }); }
-          });
-        });
-        req.on('error', e => resolve({ ok: false, description: e.message }));
-        req.setTimeout(15000, () => { req.destroy(); resolve({ ok: false, description: 'Timeout' }); });
-        req.write(body); req.end();
-      });
+      let caption = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
+      if (aiSummary && aiSummary.length > 5) {
+        caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
+      } else if (bestDesc && bestDesc.length > 10) {
+        caption += `\n\n${stripLinks(bestDesc).slice(0, 300)}`;
+      }
+      caption += `\n\n🔗 ${link}`;
+      caption = caption.slice(0, 1024);
 
-      console.log(`📤 Telegram API yanıtı: ok=${apiResult.ok} ${apiResult.ok ? 'msg_id=' + apiResult.result?.message_id : 'hata=' + apiResult.description}`);
-
-      if (!apiResult.ok) {
-        console.error(`❌ Kanala gönderilemedi — CHANNEL_ID:${CHANNEL_ID} — hata:${apiResult.description}`);
-        await bot.sendMessage(chatId, `❌ Kanala gönderilemedi!\nKanal: ${CHANNEL_ID}\nHata: ${apiResult.description}`).catch(() => {});
-        return;
+      // OG görseli varsa fotoğraf olarak, yoksa metin olarak gönder
+      const ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : null;
+      let sentMsg2 = null;
+      if (ogImg) {
+        try {
+          sentMsg2 = await bot.sendPhoto(CHANNEL_ID, ogImg, { caption });
+          console.log(`✅ Son dakika kanala gönderildi (foto) — kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
+        } catch (imgErr) {
+          console.log(`⚠️ Görsel gönderilemedi (${imgErr.message?.slice(0,60)}), metin olarak deneniyor...`);
+          // Görsel hata verirse metin olarak dene
+          const textCaption = caption.slice(0, 4096);
+          sentMsg2 = await bot.sendMessage(CHANNEL_ID, textCaption, { disable_web_page_preview: false });
+          console.log(`✅ Son dakika kanala gönderildi (metin) — kanal:${CHANNEL_ID}`);
+        }
+      } else {
+        const textCaption = caption.slice(0, 4096);
+        sentMsg2 = await bot.sendMessage(CHANNEL_ID, textCaption, { disable_web_page_preview: false });
+        console.log(`✅ Son dakika kanala gönderildi (metin) — kanal:${CHANNEL_ID}`);
       }
 
-      const msgId2 = apiResult.result?.message_id;
-      console.log(`✅ Kanala gönderildi! msg_id:${msgId2} kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
       publishedUrls.add(rawLink);
       if (link !== rawLink) publishedUrls.add(link);
       breakingPublishedUrls.add(rawLink);
       persistPublishedUrls();
-      if (msgId2) registerSentMessage(msgId2, title);
+      if (sentMsg2?.message_id) registerSentMessage(sentMsg2.message_id, title);
 
-      await bot.sendMessage(chatId, `✅ Kanala yayınlandı!\n\n📰 ${title.slice(0,200)}`).catch(() => {});
+      await bot.sendMessage(chatId, `✅ Kanala yayınlandı!\n\n📰 ${title.slice(0, 200)}`).catch(() => {});
       await bot.editMessageText(`✅ Yayınlandı!`, { chat_id: chatId, message_id: msgId }).catch(() => {});
     } catch (e) {
       console.error('❌ sd_publish_ hata:', e.message);
-      bot.sendMessage(chatId, `❌ Yayınlama hatası:\n${e.message.slice(0, 200)}`).catch(() => {});
+      await bot.sendMessage(chatId, `❌ Yayınlama hatası:\nKanal: ${CHANNEL_ID}\nHata: ${e.message.slice(0, 200)}`).catch(() => {});
     }
     return;
   }
