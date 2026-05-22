@@ -1450,12 +1450,12 @@ async function fetchLoremFlickrImage(query) {
     .map(k => TR_EN_MAP[k.toLowerCase()] || (k.length > 3 ? k : null))
     .filter(Boolean);
 
-  // Denenecek terimler: çift kelime → tek kelime → jenerik fallback'ler
+  // Denenecek terimler: çift kelime → tek kelime (jenerik "turkey,news" vb. fallback'ler kaldırıldı)
   const candidates = [];
   if (enKws.length >= 2) candidates.push(enKws.slice(0, 2).join(','));
   if (enKws.length >= 1) candidates.push(enKws[0]);
   if (enKws.length >= 3) candidates.push(enKws[1]);
-  candidates.push('turkey,news', 'news', 'newspaper', 'politics');
+  if (enKws.length >= 2) candidates.push(enKws[1]);
 
   for (const term of candidates) {
     const img = await _flickrFetch(term).catch(() => null);
@@ -2954,6 +2954,13 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
       ]).catch(() => null)) || rawCandidateUrl;
       if (candidateUrl !== rawCandidateUrl) {
         console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
+        // ── Tekrar engeli: çözümlenmiş URL zaten yayınlandıysa bu kandidatı atla ──
+        if (publishedUrls.has(candidateUrl)) {
+          publishedUrls.add(rawCandidateUrl);
+          persistPublishedUrls();
+          console.log(`⏭ Tekrar engellendi (çözümlenmiş URL): ${candidateUrl.slice(0, 60)}`);
+          continue;
+        }
         // Çözülmüş URL'yi de hemen engelle (aynı haber farklı wrapper ile gelmesin)
         publishedUrls.add(candidateUrl);
       }
@@ -2979,8 +2986,15 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
     if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
 
+    // og:image varsa logo/default görselleri filtrele — makaleye özgü olmayan görselleri reddet
     if (!media.url && ogMeta.image) {
-      media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
+      const imgLower = ogMeta.image.toLowerCase();
+      const isGenericSiteImage = /logo|default|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|icon[-_]|[-_]icon\.|opengraph[-_]default/i.test(imgLower);
+      if (!isGenericSiteImage) {
+        media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
+      } else {
+        console.log(`🚫 Logo/default görsel atlandı: ${ogMeta.image.slice(0, 60)}`);
+      }
     }
 
     if (media.type === 'image' && !chosenMedia2 && ogMeta.image2) {
