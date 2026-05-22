@@ -396,6 +396,71 @@ const RSS_FEEDS = [
     type: 'google',
     category: 'spor',
   },
+  // ── Teknoloji Kaynakları ───────────────────────────────────────────────────
+  {
+    url: 'https://news.google.com/rss/search?q=teknoloji+yapay+zeka+TR&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💻 Google Teknoloji',
+    source: 'Google Teknoloji',
+    type: 'google',
+    category: 'teknoloji',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:webrazzi.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💻 Webrazzi',
+    source: 'Webrazzi',
+    type: 'google',
+    category: 'teknoloji',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:shiftdelete.net&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💻 ShiftDelete',
+    source: 'ShiftDelete',
+    type: 'google',
+    category: 'teknoloji',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:webtekno.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💻 Webtekno',
+    source: 'Webtekno',
+    type: 'google',
+    category: 'teknoloji',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=yapay+zeka+OR+iphone+OR+android+OR+siber+guvenlik+site:cumhuriyet.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💻 Cumhuriyet Teknoloji',
+    source: 'Cumhuriyet',
+    type: 'google',
+    category: 'teknoloji',
+  },
+  // ── Ekonomi Kaynakları ─────────────────────────────────────────────────────
+  {
+    url: 'https://news.google.com/rss/search?q=site:bloomberght.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💰 Bloomberg HT',
+    source: 'Bloomberg HT',
+    type: 'google',
+    category: 'ekonomi',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=ekonomi+dolar+faiz+enflasyon&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💰 Google Ekonomi',
+    source: 'Google Ekonomi',
+    type: 'google',
+    category: 'ekonomi',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=site:dunya.com&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💰 Dünya Gazetesi',
+    source: 'Dünya',
+    type: 'google',
+    category: 'ekonomi',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=TCMB+OR+borsa+OR+bist+OR+enflasyon&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💰 Piyasalar',
+    source: 'Piyasalar',
+    type: 'google',
+    category: 'ekonomi',
+  },
   // ── Muhalif YouTube Kanalları ──────────────────────────────────────────────
   {
     url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCf_ResXZzE-o18zACUEmyvQ',
@@ -466,9 +531,9 @@ const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
     const text = `${title || ''} ${description || ''}`.toLowerCase();
     const CATEGORY_KEYWORDS = {
       spor: ['futbol','maç ','maçı','gol','transfer','fenerbahçe','galatasaray','beşiktaş','trabzonspor','milli takım','süper lig','basketbol','tenis','formula','olimpiyat','şampiyon','teknik direktör','taraftar',' lig ',' lig,','kulüp','atlet','maraton','yüzme','voleybol','spor','stadyum','deplasman','forma','golcü','kaleci','defans','hücum','turnuva','kupası','derbi'],
-      ekonomi: ['dolar','euro','faiz','enflasyon','tcmb','borsa','bist','merkez bankası','ihracat','ithalat','büyüme','bütçe','vergi','işsizlik','piyasa','hisse','altın','döviz','kredi','hazine','ekonomi','gdp','gsyih','ticaret'],
+      ekonomi: ['dolar','euro','faiz','enflasyon','tcmb','borsa','bist','merkez bankası','ihracat','ithalat','büyüme','bütçe','vergi','işsizlik','piyasa','hisse','altın','döviz','kredi','hazine','ekonomi','gdp','gsyih','ticaret','sterlin','yen','yuan','ruble','emtia','petrol','doğalgaz','akaryakıt','benzin','motorin','elektrik faturası','fiyat artışı','zam','indirim','maaş','asgari ücret','işçi','sendika','grev','banka','merkez bankası','faiz kararı','enflasyon rakamı','tüfe','üfe','büyüme rakamı','cari açık','dış ticaret','sanayi üretimi','imalat','ihracat rekoru','yatırım','fon','kripto para','bitcoin','ethereum','altın fiyatı','dolar kuru','euro kuru','konut','kira','gayrimenkul','inşaat','konut fiyatı'],
       dunya: ['ukrayna','rusya','abd ','nato','birleşmiş milletler','bm ','suriye','gazze','israil','filistin','irak','iran','çin','almanya','fransa','ingiltere','putin','biden','trump','savaş','uluslararası','küresel','dış politika'],
-      teknoloji: ['yapay zeka','ai ','teknoloji','yazılım','donanım','uygulama','sosyal medya','twitter','instagram','google','apple','microsoft','blockchain','kripto','iphone','android'],
+      teknoloji: ['yapay zeka','ai ','teknoloji','yazılım','donanım','uygulama','sosyal medya','twitter','instagram','google','apple','microsoft','blockchain','kripto','iphone','android','elektrikli araç','elektrikli otomobil','tesla','spacex','elon musk','nükleer enerji','yenilenebilir enerji','siber güvenlik','siber saldırı','veri ihlali','startup','girişim','unicorn','e-ticaret','metaverse','5g','6g','quantum','kuantum','robot','otomasyon','drone','insansız','uzay','roket','satellite','uydu','chip','çip','semiconductör','nvidia','amd','intel','samsung','huawei','tiktok','youtube','netflix','spotify','openai','chatgpt','gemini','claude','llm','büyük dil','oyun','gaming','playstation','xbox','steam','twitch','uygulama mağazası'],
       politika: ['cumhurbaşkanı','erdoğan','meclis','hükümet','bakan','chp','akp','mhp','hdp','dip','parti ','muhalefet','seçim','milletvekili','tbmm','anayasa','siyasi','muhalif','sandık','koalisy'],
     };
     const words = CATEGORY_KEYWORDS[category];
@@ -2791,7 +2856,11 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     items = await fetchFeed(feed);
     const withUrl = items.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
-    const valid = notPublished.filter((a) => isValidNewsItem(a, feed));
+    const valid = notPublished.filter((a) => {
+      if (!isValidNewsItem(a, feed)) return false;
+      const desc = a.contentSnippet || a.summary || a.content || a.description || '';
+      return matchesActiveCategory(a.title, desc, settings.activeCategory);
+    });
     console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
     validItems = sortByNeededMedia(valid, needed);
 
