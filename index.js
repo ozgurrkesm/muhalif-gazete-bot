@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.12 — /ara timeout 45s, LoremFlickr oncelikli, sendPhoto duzeltildi — 2026-05-21');
+console.log('🤖 Bot v2.13 — OG gorsel iyilestirme: Referer header, JSON-LD, buffer fallback — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -851,7 +851,7 @@ function extractMedia(item) {
   if (item.enclosure?.url) {
     const mime = item.enclosure.type || '';
     if (isVideoType(mime)) return { type: 'video', url: item.enclosure.url };
-    if (mime.startsWith('image/')) return { type: 'image', url: item.enclosure.url };
+    if (mime.startsWith('image/') || (!mime && /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(item.enclosure.url))) return { type: 'image', url: item.enclosure.url };
   }
   const mc = item.mediaContent || item['media:content'];
   if (mc?.$?.url) {
@@ -889,6 +889,7 @@ function fetchOgMeta(url, redirectCount = 0) {
         'Accept-Language': 'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'identity',
         'Cache-Control': 'no-cache',
+        'Referer': (() => { try { const u = new URL(url); return u.origin + '/'; } catch(e) { return 'https://www.google.com/'; } })(),
       },
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -905,7 +906,30 @@ function fetchOgMeta(url, redirectCount = 0) {
           html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
           html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
           html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
-        const image = imgMatch ? imgMatch[1] : null;
+        let image = imgMatch ? imgMatch[1] : null;
+        // JSON-LD structured data (NewsArticle, Article, etc.)
+        if (!image) {
+          const ldScripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+          for (const ldScript of ldScripts) {
+            try {
+              const ld = JSON.parse(ldScript[1]);
+              const ldArr = Array.isArray(ld) ? ld : [ld];
+              for (const entry of ldArr) {
+                const img = (entry.image && typeof entry.image === 'string') ? entry.image
+                  : entry.image?.url || (Array.isArray(entry.image) ? (entry.image[0]?.url || entry.image[0]) : null)
+                  || entry.thumbnailUrl || null;
+                if (img && typeof img === 'string' && img.startsWith('http')) { image = img; break; }
+              }
+            } catch {}
+            if (image) break;
+          }
+        }
+        // itemprop="image" (schema.org microdata)
+        if (!image) {
+          const ipMatch = html.match(/<(?:meta|link)[^>]+itemprop=["']image["'][^>]+(?:content|href)=["']([^"']+)["']/i) ||
+                          html.match(/<(?:meta|link)[^>]+(?:content|href)=["']([^"']+)["'][^>]+itemprop=["']image["']/i);
+          if (ipMatch && ipMatch[1]?.startsWith('http')) image = ipMatch[1];
+        }
 
         const descMatch =
           html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{20,}?)["']/i) ||
@@ -2649,11 +2673,25 @@ async function publishNowInstant() {
             } catch (e1) {
               tgLog(`⚠️ Media group hata: ${e1.message?.slice(0,80)}, tek foto deneniyor...`);
               try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
-              catch (e2) { tgLog(`❌ Foto gönderilemedi: ${e2.message?.slice(0,100)}`); }
+              catch (e2) {
+                tgLog(`⚠️ URL foto başarısız, buffer deneniyor...`);
+                const buf4a = await downloadImageBuffer(ogImg).catch(() => null);
+                if (buf4a) {
+                  try { await bot.sendPhoto(CHANNEL_ID, buf4a, { caption }); sentType = 'image'; mediaStats.image++; }
+                  catch { tgLog(`❌ Buffer foto da gönderilemedi: ${e2.message?.slice(0,100)}`); }
+                } else { tgLog(`❌ Foto gönderilemedi: ${e2.message?.slice(0,100)}`); }
+              }
             }
           } else {
             try { await bot.sendPhoto(CHANNEL_ID, ogImg, { caption }); sentType = 'image'; mediaStats.image++; }
-            catch (e) { tgLog(`❌ Foto gönderilemedi: ${e.message?.slice(0,100)}`); }
+            catch (e) {
+              tgLog(`⚠️ URL foto başarısız, buffer deneniyor...`);
+              const buf4b = await downloadImageBuffer(ogImg).catch(() => null);
+              if (buf4b) {
+                try { await bot.sendPhoto(CHANNEL_ID, buf4b, { caption }); sentType = 'image'; mediaStats.image++; }
+                catch { tgLog(`❌ Buffer foto da gönderilemedi: ${e.message?.slice(0,100)}`); }
+              } else { tgLog(`❌ Foto gönderilemedi: ${e.message?.slice(0,100)}`); }
+            }
           }
         }
 
@@ -2986,6 +3024,20 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
         sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
         sentType = 'image';
       }
+    } catch (eSP) {
+      // URL olarak gönderilemedi → buffer olarak indir ve dene (hotlink koruması vb.)
+      console.log(`⚠️ sendPhoto URL başarısız, buffer deneniyor: ${eSP.message?.slice(0,80)}`);
+      const bufSP = await downloadImageBuffer(chosenMedia.url).catch(() => null);
+      if (bufSP) {
+        try {
+          sentMsg = await bot.sendPhoto(CHANNEL_ID, bufSP, sendOpts({ caption }));
+          sentType = 'image';
+          console.log('🖼 Buffer olarak gönderildi');
+        } catch (eBuf) {
+          console.log(`❌ Buffer da başarısız: ${eBuf.message?.slice(0,80)}`);
+        }
+      }
+    }
     } else {
         // Medya yok → DDG görsel dene → atla (metin ASLA)
         const ddgImg2 = await fetchDuckDuckGoImage(title).catch(() => null);
