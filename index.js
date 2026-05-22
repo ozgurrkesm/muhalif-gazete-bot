@@ -3823,30 +3823,31 @@ bot.on('callback_query', async (query) => {
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
 
-      // OG meta + AI özet — paralel, 9 saniyelik sert timeout
-      const [ogMeta, aiSummary] = await Promise.race([
-        Promise.all([
-          fetchOgMeta(link).catch(() => ({})),
-          summarizeNews(title, rawDesc).catch(() => null),
-        ]),
-        new Promise(r => setTimeout(() => r([{}, null]), 9000)),
+      // 1) OG meta çek (7s timeout) — articleBody AI için gerekli
+      const ogMeta = await Promise.race([
+        fetchOgMeta(link).catch(() => ({})),
+        new Promise(r => setTimeout(() => r({}), 7000)),
       ]);
 
-      // En iyi açıklamayı seç: AI özeti > OG açıklaması > RSS açıklaması
+      // 2) AI özet — articleBody varsa daha zengin, summarizeNews içinde kendi 8s timeout var
+      const descForAI = ogMeta.description || rawDesc || '';
+      const aiSummary = await summarizeNews(title, descForAI, ogMeta.articleBody || null).catch(() => null);
+
+      // 3) En iyi içeriği seç: AI özeti > OG açıklaması > RSS açıklaması
       const bestDesc = (aiSummary && aiSummary.length > 5)
         ? cleanArrows(stripLinks(aiSummary))
         : (ogMeta.description && ogMeta.description.length > 10)
-          ? stripLinks(ogMeta.description).slice(0, 500)
+          ? stripLinks(ogMeta.description).slice(0, 600)
           : (rawDesc && rawDesc.length > 10)
-            ? stripLinks(rawDesc).slice(0, 500)
+            ? stripLinks(rawDesc).slice(0, 600)
             : null;
 
+      // Link yok — içerik direkt metin olarak, web önizlemesi kapalı
       let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
       if (bestDesc) text += `\n\n${bestDesc}`;
-      text += `\n\n🔗 ${link}`;
       text = text.slice(0, 4096);
 
-      const sentMsg2 = await bot.sendMessage(CHANNEL_ID, text, { disable_web_page_preview: false });
+      const sentMsg2 = await bot.sendMessage(CHANNEL_ID, text, { disable_web_page_preview: true });
       console.log(`✅ Son dakika kanala gönderildi — msg_id:${sentMsg2?.message_id} kanal:${CHANNEL_ID} başlık:${title.slice(0, 60)}`);
 
       publishedUrls.add(rawLink);
