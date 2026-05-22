@@ -3815,11 +3815,21 @@ bot.on('callback_query', async (query) => {
       if (rssMediaRaw.url) rssMediaRaw.url = upgradeImageUrl(rssMediaRaw.url);
       if (isLiveBroadcastTitle(title)) { rssMediaRaw.type = null; rssMediaRaw.url = null; }
 
+      // Görsel seç — otomatik yayınla (publishNowInstant) ile birebir aynı mantık
       let imgUrl = null;
-      if (ogMeta.image && !isGenericOrLive(ogMeta.image)) {
-        imgUrl = upgradeImageUrl(ogMeta.image);
-      } else if (rssMediaRaw.type === 'image' && rssMediaRaw.url && !isGenericOrLive(rssMediaRaw.url)) {
-        imgUrl = rssMediaRaw.url;
+      if (ogMeta.image) {
+        const imgLower = ogMeta.image.toLowerCase();
+        const isGenericSiteImage = /logo|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|opengraph[-_]default/i.test(imgLower);
+        if (!isGenericSiteImage && !isLiveBroadcastImage(ogMeta.image)) {
+          imgUrl = upgradeImageUrl(ogMeta.image);
+        }
+      }
+      if (!imgUrl && rssMediaRaw.type === 'image' && rssMediaRaw.url) {
+        const rssLower = rssMediaRaw.url.toLowerCase();
+        const isGenericRss = /logo|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|opengraph[-_]default/i.test(rssLower);
+        if (!isGenericRss && !isLiveBroadcastImage(rssMediaRaw.url)) {
+          imgUrl = rssMediaRaw.url;
+        }
       }
 
       // Gömülü web videosu var mı?
