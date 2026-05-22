@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.20 — Hata düzeltmeleri: isBreakingFeed URL karşılaştırması, matchesActiveCategory çağrısı, pgClient temizleme — 2026-05-22');
+console.log('🤖 Bot v2.21 — canli yayin gorsel filtresi eklendi — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -917,12 +917,16 @@ function extractMedia(item) {
   if (item.enclosure?.url) {
     const mime = item.enclosure.type || '';
     if (isVideoType(mime)) return { type: 'video', url: item.enclosure.url };
-    if (mime.startsWith('image/') || (!mime && /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(item.enclosure.url))) return { type: 'image', url: item.enclosure.url };
+    if (mime.startsWith('image/') || (!mime && /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(item.enclosure.url))) {
+      if (isLiveBroadcastImage(item.enclosure.url)) { console.log(`🚫 Canlı yayın görseli atlandı (enclosure): ${item.enclosure.url.slice(0,80)}`); return { type: null, url: null }; }
+      return { type: 'image', url: item.enclosure.url };
+    }
   }
   const mc = item.mediaContent || item['media:content'];
   if (mc?.$?.url) {
     const mime = mc.$.type || mc.$.medium || '';
     if (isVideoType(mime) || mime === 'video') return { type: 'video', url: mc.$.url };
+    if (isLiveBroadcastImage(mc.$.url)) { console.log(`🚫 Canlı yayın görseli atlandı (media:content): ${mc.$.url.slice(0,80)}`); return { type: null, url: null }; }
     return { type: 'image', url: mc.$.url };
   }
   const mg = item.mediaGroup || item['media:group'];
@@ -973,6 +977,8 @@ function fetchOgMeta(url, redirectCount = 0) {
           html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
           html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
         let image = imgMatch ? imgMatch[1] : null;
+        // Canlı yayın overlay görseli ise atla
+        if (isLiveBroadcastImage(image)) { console.log(`🚫 Canlı yayın görseli atlandı (og:image): ${(image||'').slice(0,80)}`); image = null; }
         // JSON-LD structured data (NewsArticle, Article, etc.)
         if (!image) {
           const ldScripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
@@ -1808,6 +1814,21 @@ function sortByNeededMedia(items, needed) {
   const text  = items.filter(it => !itemHasImage(it) && !itemHasVideo(it));
   return [...image, ...video, ...text];
 }
+
+// ─── Canlı Yayın Görseli Filtresi ────────────────────────────────────────────
+// "CANLI YAYIN", "SON DAKİKA" overlay'li jenerik thumbnail'leri atar
+function isLiveBroadcastImage(url) {
+  if (!url) return false;
+  const u = url.toLowerCase();
+  // URL tabanlı ipuçları
+  if (/canl[iy][-_]?yayin|canliyayin|canli[-_]?tv|live[-_]?stream|live[-_]?broadcast|son[-_]?dakika[-_]?cover|breaking[-_]?cover|sd[-_]?kapak|sd[-_]?cover/.test(u)) return true;
+  // Türk haber kanallarının bilinen canlı yayın thumbnail URL kalıpları
+  if (//canli//i.test(u) && /.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  // Genel "son dakika" overlay görselleri (sondakika cover, sd_default vb.)
+  if (/son.?dakika.{0,20}.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  return false;
+}
+
 
 function upgradeImageUrl(url) {
   if (!url) return url;
@@ -2981,10 +3002,10 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     if (!media.url && ogMeta.image) {
       const imgLower = ogMeta.image.toLowerCase();
       const isGenericSiteImage = /logo|default|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|icon[-_]|[-_]icon\.|opengraph[-_]default/i.test(imgLower);
-      if (!isGenericSiteImage) {
+      if (!isGenericSiteImage && !isLiveBroadcastImage(ogMeta.image)) {
         media = { type: 'image', url: upgradeImageUrl(ogMeta.image) };
       } else {
-        console.log(`🚫 Logo/default görsel atlandı: ${ogMeta.image.slice(0, 60)}`);
+        console.log(`🚫 Logo/default/canlı yayın görseli atlandı: ${ogMeta.image.slice(0, 60)}`);
       }
     }
 
