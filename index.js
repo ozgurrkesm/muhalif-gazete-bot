@@ -147,8 +147,13 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
+// Webhook modu: RAILWAY_PUBLIC_DOMAIN varsa webhook kullan (409 yok), yoksa polling
+const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
+const WEBHOOK_PATH = '/tg-webhook';
+const WEBHOOK_URL  = RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}${WEBHOOK_PATH}` : '';
+
 const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
+  polling: WEBHOOK_URL ? false : { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
 });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
@@ -4749,37 +4754,30 @@ bot.onText(/\/saglik/, async (msg) => {
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
   });
-let _409backoff = false;
-bot.on('polling_error', async (err) => {
+bot.on('polling_error', (err) => {
   trackError('polling', err.message);
-  if (err.message.includes('409') && !_409backoff) {
-    _409backoff = true;
-    console.warn('⚠️ 409 Conflict — eski instance kapanana kadar 30s bekleniyor...');
-    await bot.stopPolling().catch(() => {});
-    await new Promise(r => setTimeout(r, 30000));
-    console.log('🔄 Polling yeniden başlatılıyor...');
-    await bot.startPolling().catch(e => console.error('⚠️ Polling restart hatası:', e.message));
-    _409backoff = false;
-  } else if (!err.message.includes('409')) {
-    console.error(`⚠️ Polling hatası: ${err.message}`);
-  }
+  console.error(`⚠️ Polling hatası: ${err.message}`);
 });
 
 // ─── Temiz Kapanış ────────────────────────────────────────────────────────────
 
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM alındı, bot durduruluyor...');
-  bot.stopPolling().finally(() => {
-    persistPublishedUrls();
-    process.exit(0);
-  });
+  const shutdown = () => { persistPublishedUrls(); process.exit(0); };
+  if (WEBHOOK_URL) {
+    bot.deleteWebhook().catch(() => {}).finally(shutdown);
+  } else {
+    bot.stopPolling().finally(shutdown);
+  }
 });
 
 process.on('SIGINT', () => {
-  bot.stopPolling().finally(() => {
-    persistPublishedUrls();
-    process.exit(0);
-  });
+  const shutdown = () => { persistPublishedUrls(); process.exit(0); };
+  if (WEBHOOK_URL) {
+    bot.deleteWebhook().catch(() => {}).finally(shutdown);
+  } else {
+    bot.stopPolling().finally(shutdown);
+  }
 });
 
 // ─── Başlat ───────────────────────────────────────────────────────────────────
@@ -4798,21 +4796,51 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-// 409 önlemi: başlarken Telegram polling oturumunu sıfırla
-bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+// Polling modunda: eski Telegram oturumunu sıfırla
+if (!WEBHOOK_URL) {
+  bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+}
 
 publishNextNews();
 resetInterval();
 startBreakingNewsChecker();
 checkBreakingNews(); // İlk kontrol hemen yap
 
-// ── Railway health check — HTTP sunucu olmadan Railway servisi kırmızı gösterir ──
+// ── HTTP sunucu: hem Railway health check hem de Telegram webhook ────────────
 const HEALTH_PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('OK');
-}).listen(HEALTH_PORT, () => {
-  console.log(`✅ Health check dinliyor: port ${HEALTH_PORT}`);
+  if (req.method === 'POST' && req.url === WEBHOOK_PATH) {
+    // Telegram webhook isteği
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try {
+        const update = JSON.parse(body);
+        bot.processUpdate(update);
+        res.writeHead(200);
+        res.end('OK');
+      } catch (e) {
+        res.writeHead(400);
+        res.end('Bad Request');
+      }
+    });
+  } else {
+    // Health check
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('OK');
+  }
+}).listen(HEALTH_PORT, async () => {
+  console.log(`✅ HTTP sunucu dinliyor: port ${HEALTH_PORT}`);
+  if (WEBHOOK_URL) {
+    try {
+      await bot.setWebhook(WEBHOOK_URL, { drop_pending_updates: true });
+      console.log(`🔗 Webhook modu aktif: ${WEBHOOK_URL}`);
+    } catch (e) {
+      console.error('❌ Webhook ayarlanamadı:', e.message);
+    }
+  } else {
+    console.log('📡 Polling modu aktif (RAILWAY_PUBLIC_DOMAIN bulunamadı)');
+  }
 });
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
