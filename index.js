@@ -3823,11 +3823,26 @@ bot.on('callback_query', async (query) => {
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
 
-      // Sadece RSS verisiyle basit metin — dış istek yok, askıya alınmaz
+      // OG meta + AI özet — paralel, 9 saniyelik sert timeout
+      const [ogMeta, aiSummary] = await Promise.race([
+        Promise.all([
+          fetchOgMeta(link).catch(() => ({})),
+          summarizeNews(title, rawDesc).catch(() => null),
+        ]),
+        new Promise(r => setTimeout(() => r([{}, null]), 9000)),
+      ]);
+
+      // En iyi açıklamayı seç: AI özeti > OG açıklaması > RSS açıklaması
+      const bestDesc = (aiSummary && aiSummary.length > 5)
+        ? cleanArrows(stripLinks(aiSummary))
+        : (ogMeta.description && ogMeta.description.length > 10)
+          ? stripLinks(ogMeta.description).slice(0, 500)
+          : (rawDesc && rawDesc.length > 10)
+            ? stripLinks(rawDesc).slice(0, 500)
+            : null;
+
       let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
-      if (rawDesc && rawDesc.length > 10) {
-        text += `\n\n${stripLinks(rawDesc).slice(0, 400)}`;
-      }
+      if (bestDesc) text += `\n\n${bestDesc}`;
       text += `\n\n🔗 ${link}`;
       text = text.slice(0, 4096);
 
