@@ -2577,7 +2577,9 @@ async function fetchFeedXml(url, maxRedirects = 5) {
 
 async function fetchFeed(feed) {
   try {
-    const xml = await fetchFeedXml(feed.url);
+    let xml = await fetchFeedXml(feed.url);
+    // Geçersiz XML entity'lerini temizle (& → &amp;) — NTV Spor ve benzeri beslemeler için
+    xml = xml.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;');
     const result = await parser.parseString(xml);
     return result.items || [];
   } catch (err) {
