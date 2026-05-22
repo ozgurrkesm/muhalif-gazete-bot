@@ -1834,9 +1834,9 @@ function upgradeImageUrl(url) {
   let u = url;
   // ── Query param boyut temizliği ──────────────────────────────────────
   // Boyut parametrelerini sil (w, h, width, height, s, size, resize vb.)
-  u = u.replace(/([?&])(w|h|width|height|s|size|resize|fit|crop|thumb|thumbnail|dim|dims|maxw|maxh|wid|hei)=[d,x]+/gi, (_, sep) => sep);
+  u = u.replace(/([?&])(w|h|width|height|s|size|resize|fit|crop|thumb|thumbnail|dim|dims|maxw|maxh|wid|hei)=[\d,x]+/gi, (_, sep) => sep);
   // Kalite parametresini yüksek tut (q, quality, qual)
-  u = u.replace(/([?&])(?:q|quality|qual)=d+/gi, '$1q=95');
+  u = u.replace(/([?&])(?:q|quality|qual)=\d+/gi, '$1q=95');
   // format=webp veya format=jpg bırak, format=thumb kaldır
   u = u.replace(/([?&])format=(?:thumb|thumbnail|small|low|preview)/gi, (_, sep) => sep);
   // Temizlik: ?& && sondaki ? veya &
@@ -3055,7 +3055,6 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
           try {
             sentMsg = await bot.sendPhoto(CHANNEL_ID, ddgImg2, sendOpts({ caption }));
             sentType = 'image';
-            mediaStats.image = (mediaStats.image || 0) + 1;
             console.log('🖼 DDG görseli gönderildi (inner)');
           } catch (e) {
             console.log('❌ DDG reddedildi: ' + (e.message || '').slice(0,60));
@@ -3066,7 +3065,24 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
           console.log('⏭ Görsel bulunamadı — haber atlandı');
         }
     }
-  } catch {}
+  } catch (e) {
+    console.error(`❌ [${feed.source}] Gönderim hatası: ${e?.message || e}`);
+  }
+
+  if (sentType === 'skip') return null;
+
+  if (sentType === 'video') mediaStats.video = (mediaStats.video || 0) + 1;
+  else mediaStats.image = (mediaStats.image || 0) + 1;
+
+  console.log(`✅ [${feed.source}] [${sentType}] ${title.slice(0, 60)}`);
+
+  if (sentMsg?.message_id) {
+    registerSentMessage(sentMsg.message_id, title);
+    await tryPin(sentMsg.message_id).catch(() => {});
+  }
+
+  await notifyFilterUsers(title, rawDesc, url).catch(() => {});
+
   return null;
 }
 
@@ -4432,8 +4448,7 @@ bot.onText(/\/video/, async (msg) => {
   for (const feed of youtubeFeeds) {
     if (sent) break;
     try {
-      const parsed = await parser.parseURL(feed.url);
-      const items = (parsed.items || []).slice(0, 8);
+      const items = (await fetchFeed(feed)).slice(0, 8);
       for (const item of items) {
         const url = item.link || item.guid;
         if (publishedUrls.has(url)) continue;
@@ -4472,8 +4487,7 @@ bot.onText(/\/video/, async (msg) => {
     for (const feed of newsFeeds) {
       if (sent) break;
       try {
-        const parsed = await parser.parseURL(feed.url);
-        const items = (parsed.items || []).slice(0, 5);
+        const items = (await fetchFeed(feed)).slice(0, 5);
         for (const item of items) {
           const url = item.link || item.guid;
           if (publishedUrls.has(url)) continue;
@@ -4508,12 +4522,14 @@ bot.onText(/\/video/, async (msg) => {
 });
 
 bot.onText(/\/dur/, (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
   settings.paused = true;
   saveSettings();
   bot.sendMessage(msg.chat.id, '⏸ Bot durduruldu. Devam ettirmek için admin panelinden "▶️ Devam Et"e basın veya /baslat yazın.');
 });
 
 bot.onText(/\/baslat/, (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
   settings.paused = false;
   saveSettings();
   bot.sendMessage(msg.chat.id, '▶️ Bot yeniden başlatıldı!');
@@ -4621,7 +4637,7 @@ bot.onText(/\/saglik/, async (msg) => {
           if (gPath) {
             try {
               await bot.sendVideo(CHANNEL_ID, { source: gPath }, { caption: '📹 Video Haber', supports_streaming: true });
-              try { fs.rmSync(require('path').dirname(gPath), { recursive: true, force: true }); } catch {}
+              try { fs.rmSync(path.dirname(gPath), { recursive: true, force: true }); } catch {}
               ok = true;
             } catch {}
           }
