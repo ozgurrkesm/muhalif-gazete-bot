@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.19 — articleBody regex fix: nested HTML tag sorunu cozuldu — 2026-05-22');
+console.log('🤖 Bot v2.20 — Hata düzeltmeleri: isBreakingFeed URL karşılaştırması, matchesActiveCategory çağrısı, pgClient temizleme — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -830,6 +830,7 @@ async function initDatabase() {
     if (titlesRes.rows.length) console.log(`✅ ${titlesRes.rows.length} başlık DB'den yüklendi`);
   } catch (e) {
     console.error('⚠️ PostgreSQL bağlanamadı, dosya sistemi kullanılıyor:', e.message);
+    try { if (pgClient) pgClient.end(); } catch {}
     pgClient = null;
     dbReady = false;
   }
@@ -3436,7 +3437,7 @@ async function checkBreakingNews() {
         if (breakingPublishedUrls.has(u)) return false;
         // publishedUrls'te varsa ama son dakika feed'inden geliyorsa yine de geç
         // (normal feedlerden gelenler için publishedUrls de kontrol et)
-        const isBreakingFeed = BREAKING_NEWS_FEEDS.includes(feed);
+        const isBreakingFeed = BREAKING_NEWS_FEEDS.some(bf => bf.url === feed.url);
         if (!isBreakingFeed && publishedUrls.has(u)) return false;
         if (!isValidNewsItem(item, feed)) return false;
         // Özel son dakika feedlerinde başlık filtresi zorunlu değil (zaten SD içerik)
@@ -4137,7 +4138,7 @@ bot.on('callback_query', async (query) => {
       const refreshMsg = await bot.sendMessage(chatId, '🔄 Tüm haber kaynakları yenileniyor, lütfen bekle...').catch(() => null);
       try {
         const activePool = RSS_FEEDS.filter(f => {
-          if (!matchesActiveCategory) return true;
+          if (!matchesActiveCategory(f.title || f.label || "", "", settings.activeCategory)) return true;
           return f.category === 'hepsi' || f.category === settings.activeCategory || settings.activeCategory === 'hepsi';
         });
         const limit = Math.min(activePool.length, 20);
