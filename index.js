@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.18 — /ara detay fix: articleBody fallback, isTextSameAsTitle duzeltildi — 2026-05-22');
+console.log('🤖 Bot v2.19 — articleBody regex fix: nested HTML tag sorunu cozuldu — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -940,13 +940,13 @@ function fetchOgMeta(url, redirectCount = 0) {
         const rawDesc = descMatch ? descMatch[1].replace(/&#?[a-z0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim() : null;
         const description = rawDesc && !isGarbageText(rawDesc) ? rawDesc : null;
 
-        const pMatches = html.match(/<p[^>]*>([^<]{40,})<\/p>/gi) || [];
+        const pMatches = html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) || [];
         const bodyText = pMatches
-          .map(p => p.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+          .map(p => p.replace(/<[^>]+>/g, '').replace(/&[a-z#0-9]+;/gi, ' ').replace(/\s+/g, ' ').trim())
           .filter(t => t.length > 40 && !isGarbageText(t))
-          .slice(0, 6)
+          .slice(0, 8)
           .join(' ');
-        const articleBody = bodyText.length > 80 ? bodyText.slice(0, 1200) : null;
+        const articleBody = bodyText.length > 80 ? bodyText.slice(0, 1500) : null;
 
         // İkinci görsel: haber sayfasındaki büyük içerik görselleri
         // Alakasız küçük görseller (logo, ikon, reklam, tracking pixel) hariç
