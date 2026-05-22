@@ -690,6 +690,7 @@ setInterval(persistPublishedUrls, 30 * 1000);
 const breakingPublishedUrls = new Set();
 let breakingNewsInterval = null;
 let lastBreakingNewsTime = 0;
+let isCheckingBreaking = false;
 const BREAKING_MIN_GAP_MS = 5 * 60 * 1000; // 5 dakika min aralık
 // Her 2 saatte bir temizle (çok büyümemesi için)
 setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
@@ -3379,6 +3380,7 @@ async function searchYouTubeByTitle(title, source) {
 
 async function checkBreakingNews() {
   if (settings.paused) return;
+  if (isCheckingBreaking) { console.log('⏳ Son dakika zaten kontrol ediliyor, atlandı'); return; }
 
   const nowMs = Date.now();
   if (nowMs - lastBreakingNewsTime < BREAKING_MIN_GAP_MS) {
@@ -3386,6 +3388,8 @@ async function checkBreakingNews() {
     console.log(`⏳ Son dakika bekleniyor: ${rem}sn`);
     return;
   }
+
+  isCheckingBreaking = true;
 
   // BREAKING_NEWS_FEEDS + ana muhalif feedlerden son dakika kelimesi içerenleri de tara
   const allBreakingFeeds = [
@@ -3417,17 +3421,14 @@ async function checkBreakingNews() {
         const { title: checkTitle } = buildItemMeta(item, feed);
         if (isTitleDuplicate(checkTitle)) continue;
 
-        publishedUrls.add(url);
+        // Sadece bu session'da tekrar göndermeyi engelle — başarılı gönderim sonrası kalıcı işaretlenecek
         breakingPublishedUrls.add(url);
-        persistPublishedUrls();
-        lastBreakingNewsTime = Date.now();
 
         const { title, rawDesc } = buildItemMeta(item, feed);
         const sourceName = feed.source || '';
         const categoryTag = detectCategory(title, rawDesc);
         const catEmoji = categoryTag ? `${categoryTag} ` : '';
-        let caption = ''; // ogMeta sonrası doldurulur
-
+        let caption = '';
         let sentMsg = null;
         let sentType = 'text';
 
@@ -3437,27 +3438,37 @@ async function checkBreakingNews() {
             realUrl = (await resolveGoogleNewsUrl(url)) || url;
           }
 
-          // ogMeta çek ve caption oluştur
-          { const _og = await fetchOgMeta(realUrl).catch(() => ({})); const bestD = _og.description || rawDesc || ''; const aiS = await summarizeNews(title, bestD, _og.articleBody || null); caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
+          // OG meta + AI özeti (ogMeta hem caption hem resim için cache'lendi — tek çağrı)
+          const ogMeta = await fetchOgMeta(realUrl).catch(() => ({}));
+          const bestD = ogMeta.description || rawDesc || '';
+          const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null);
+          caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`);
+          if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`;
+          if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
-          // Haber sitesinden video
+          // Haber sitesinden video — 20s timeout
           if (!realUrl.includes('news.google.com')) {
-            const ok = await sendArticleVideoSmart(CHANNEL_ID, realUrl, caption);
+            const ok = await Promise.race([
+              sendArticleVideoSmart(CHANNEL_ID, realUrl, caption).catch(() => false),
+              new Promise(r => setTimeout(() => r(false), 20000)),
+            ]);
             if (ok) { sentType = 'video'; mediaStats.video++; }
           }
 
-          // YouTube araması
+          // YouTube araması — 15s timeout
           if (sentType !== 'video' && sourceName) {
-            const ytId = await searchYouTubeByTitle(title, sourceName);
+            const ytId = await Promise.race([
+              searchYouTubeByTitle(title, sourceName).catch(() => null),
+              new Promise(r => setTimeout(() => r(null), 15000)),
+            ]);
             if (ytId) {
               const ok = await sendYouTubeVideoSmart(CHANNEL_ID, `https://www.youtube.com/watch?v=${ytId}`, caption);
               if (ok) { sentType = 'video'; mediaStats.video++; }
             }
           }
 
-          // Resim
+          // Resim (cache'li ogMeta kullan — tekrar çekme)
           if (sentType !== 'video') {
-            const ogMeta = await fetchOgMeta(realUrl);
             const rssMedia = extractMedia(item);
             if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
             const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
@@ -3487,10 +3498,16 @@ async function checkBreakingNews() {
             }
           }
 
+          // Başarılı gönderim sonrası kalıcı olarak işaretle
+          publishedUrls.add(url);
+          persistPublishedUrls();
+          lastBreakingNewsTime = Date.now();
+
           const pinId = sentMsg?.message_id || null;
           if (pinId) { registerSentMessage(pinId, title); await tryPin(pinId); }
           console.log(`✅ [Son Dakika] [${sentType}] ${title.slice(0, 60)}`);
           await notifyFilterUsers(title, rawDesc, url);
+          isCheckingBreaking = false;
           return;
 
         } catch (err) {
@@ -3499,6 +3516,7 @@ async function checkBreakingNews() {
       }
     } catch { /* feed hatası */ }
   }
+  isCheckingBreaking = false;
 }
 
 
