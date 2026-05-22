@@ -3823,18 +3823,20 @@ bot.on('callback_query', async (query) => {
         }
       }
       if (!sentMsg) {
-        console.error(`❌ Kanala gönderilemedi: ${sendError}`);
-        bot.sendMessage(chatId, `❌ Kanala gönderilemedi:\n${sendError}`).catch(() => {});
+        console.error(`❌ Kanala gönderilemedi — CHANNEL_ID:${CHANNEL_ID} — hata:${sendError}`);
+        await bot.sendMessage(chatId, `❌ Kanala gönderilemedi!\nKanal: ${CHANNEL_ID}\nHata: ${sendError}`).catch(() => {});
         return;
       }
 
+      console.log(`✅ Kanala gönderildi! msg_id:${sentMsg.message_id} kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
       publishedUrls.add(rawLink);
       if (link !== rawLink) publishedUrls.add(link);
       breakingPublishedUrls.add(rawLink);
       persistPublishedUrls();
       if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
 
-      await bot.editMessageText(`✅ Kanala yayınlandı!\n\n📰 ${title}`, {
+      await bot.sendMessage(chatId, `✅ Kanala yayınlandı!\n\n📰 ${title.slice(0,200)}`).catch(() => {});
+      await bot.editMessageText(`✅ Yayınlandı — msg #${sentMsg.message_id}`, {
         chat_id: chatId, message_id: msgId
       }).catch(() => {});
     } catch (e) {
