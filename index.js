@@ -148,7 +148,7 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 100, autoStart: false, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
+  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
 });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
@@ -735,19 +735,16 @@ async function initDatabase() {
   }
   try {
     const pgModule = await import('pg');
-    const { Client } = pgModule.default || pgModule;
-    // Önce SSL ile dene, olmazsa SSL'siz bağlan (Railway iç network SSL desteklemez)
+    const { Pool } = pgModule.default || pgModule;
+    // Pool: concurrent query'leri destekler (Client tek bağlantıya kilitlenir → DeprecationWarning)
     try {
-      pgClient = new Client({
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
-      });
-      await pgClient.connect();
+      pgClient = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
+      await pgClient.query('SELECT 1');
     } catch (sslErr) {
       if (sslErr.message.includes('SSL') || sslErr.message.includes('ssl')) {
         console.log(`ℹ️ SSL desteklenmiyor, SSL'siz bağlanılıyor...`);
-        pgClient = new Client({ connectionString: process.env.DATABASE_URL });
-        await pgClient.connect();
+        pgClient = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
+        await pgClient.query('SELECT 1');
       } else {
         throw sslErr;
       }
@@ -4780,29 +4777,10 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-// ─── Güvenli Başlangıç — eski instance polling'i bitmeden yenisi başlamasın ──
-async function safeStart() {
-  try {
-    console.log('⏳ Telegram bağlantısı temizleniyor (409 önlemi)...');
-    // Önce webhook sil + pending updates temizle
-    await bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
-    // Eski instance'ın kapanması için bekle (Railway rolling deploy — 8sn yeterli)
-    await new Promise(r => setTimeout(r, 8000));
-    // Polling başlat
-    await bot.startPolling({ restart: false }).catch(e => {
-      console.error('⚠️ startPolling hatası:', e.message);
-    });
-    console.log('✅ Polling başlatıldı.');
-  } catch (e) {
-    console.error('❌ safeStart hatası:', e.message);
-  }
-  publishNextNews();
-  resetInterval();
-  startBreakingNewsChecker();
-  checkBreakingNews(); // İlk kontrol hemen yap
-}
-
-safeStart();
+publishNextNews();
+resetInterval();
+startBreakingNewsChecker();
+checkBreakingNews(); // İlk kontrol hemen yap
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
