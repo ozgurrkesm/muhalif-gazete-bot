@@ -3803,45 +3803,52 @@ bot.on('callback_query', async (query) => {
       const rawDesc = item.contentSnippet || item.summary || item.description || '';
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
-      let caption = `🚨 *SON DAKİKA*\n\n${catE}*${stripLinks(title)}*`;
-      if (rawDesc && rawDesc.length > 10) caption += `\n\n${stripLinks(rawDesc).slice(0, 300)}`;
-      caption += `\n\n🔗 ${link}`;
-      caption = caption.slice(0, 4096);
 
-      let sentMsg = null;
-      let sendError = null;
-      try {
-        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-      } catch (e1) {
-        sendError = e1.message;
-        try {
-          const plainCaption = caption.replace(/[*_`\[\]]/g, '').trim();
-          sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false });
-          sendError = null;
-        } catch (e2) {
-          sendError = e2.message;
-        }
-      }
-      if (!sentMsg) {
-        console.error(`❌ Kanala gönderilemedi — CHANNEL_ID:${CHANNEL_ID} — hata:${sendError}`);
-        await bot.sendMessage(chatId, `❌ Kanala gönderilemedi!\nKanal: ${CHANNEL_ID}\nHata: ${sendError}`).catch(() => {});
+      // Düz metin — Markdown yok, parse hatası olmaz
+      let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
+      if (rawDesc && rawDesc.length > 10) text += `\n\n${stripLinks(rawDesc).slice(0, 300)}`;
+      text += `\n\n🔗 ${link}`;
+      text = text.slice(0, 4096);
+
+      // Doğrudan Telegram API çağrısı — bot kütüphanesi bypass
+      const BOT_TOKEN_VAL = process.env.BOT_TOKEN || '';
+      const apiResult = await new Promise((resolve) => {
+        const body = JSON.stringify({ chat_id: CHANNEL_ID, text, disable_web_page_preview: false });
+        const req = https.request({
+          hostname: 'api.telegram.org',
+          path: `/bot${BOT_TOKEN_VAL}/sendMessage`,
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+        }, (res) => {
+          let d = ''; res.on('data', c => d += c); res.on('end', () => {
+            try { resolve(JSON.parse(d)); } catch { resolve({ ok: false, description: 'JSON parse hatası' }); }
+          });
+        });
+        req.on('error', e => resolve({ ok: false, description: e.message }));
+        req.setTimeout(15000, () => { req.destroy(); resolve({ ok: false, description: 'Timeout' }); });
+        req.write(body); req.end();
+      });
+
+      console.log(`📤 Telegram API yanıtı: ok=${apiResult.ok} ${apiResult.ok ? 'msg_id=' + apiResult.result?.message_id : 'hata=' + apiResult.description}`);
+
+      if (!apiResult.ok) {
+        console.error(`❌ Kanala gönderilemedi — CHANNEL_ID:${CHANNEL_ID} — hata:${apiResult.description}`);
+        await bot.sendMessage(chatId, `❌ Kanala gönderilemedi!\nKanal: ${CHANNEL_ID}\nHata: ${apiResult.description}`).catch(() => {});
         return;
       }
 
-      console.log(`✅ Kanala gönderildi! msg_id:${sentMsg.message_id} kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
+      const msgId2 = apiResult.result?.message_id;
+      console.log(`✅ Kanala gönderildi! msg_id:${msgId2} kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
       publishedUrls.add(rawLink);
       if (link !== rawLink) publishedUrls.add(link);
       breakingPublishedUrls.add(rawLink);
       persistPublishedUrls();
-      if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
+      if (msgId2) registerSentMessage(msgId2, title);
 
       await bot.sendMessage(chatId, `✅ Kanala yayınlandı!\n\n📰 ${title.slice(0,200)}`).catch(() => {});
-      await bot.editMessageText(`✅ Yayınlandı — msg #${sentMsg.message_id}`, {
-        chat_id: chatId, message_id: msgId
-      }).catch(() => {});
+      await bot.editMessageText(`✅ Yayınlandı!`, { chat_id: chatId, message_id: msgId }).catch(() => {});
     } catch (e) {
       console.error('❌ sd_publish_ hata:', e.message);
-      // answerCallbackQuery zaten çağrıldı — admin'e doğrudan mesaj gönder
       bot.sendMessage(chatId, `❌ Yayınlama hatası:\n${e.message.slice(0, 200)}`).catch(() => {});
     }
     return;
@@ -4759,7 +4766,7 @@ const HEALTH_PORT = process.env.PORT || 3000;
 const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
 const WEBHOOK_URL_ACTIVE = RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/tg-webhook` : '';
 // Railway'de RAILWAY_ENVIRONMENT otomatik set edilir. Yoksa Replit/lokal ortam.
-const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL);
+const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL);
 const LOCAL_POLLING = process.env.LOCAL_POLLING === 'true'; // Replit'te test için manuel aktif et
 console.log(`🔧 Ortam: ${IS_RAILWAY ? 'RAILWAY' : 'REPLIT/LOKAL'} | Mod: ${WEBHOOK_URL_ACTIVE ? 'WEBHOOK → ' + WEBHOOK_URL_ACTIVE : IS_RAILWAY || LOCAL_POLLING ? 'POLLING' : 'SADECE-RSS (polling kapalı)'}`);
 
