@@ -4758,7 +4758,10 @@ initDatabase().then(() => {
 const HEALTH_PORT = process.env.PORT || 3000;
 const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
 const WEBHOOK_URL_ACTIVE = RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/tg-webhook` : '';
-console.log(`🔧 Mod: ${WEBHOOK_URL_ACTIVE ? 'WEBHOOK → ' + WEBHOOK_URL_ACTIVE : 'POLLING (RAILWAY_PUBLIC_DOMAIN yok)'}`);
+// Railway'de RAILWAY_ENVIRONMENT otomatik set edilir. Yoksa Replit/lokal ortam.
+const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL);
+const LOCAL_POLLING = process.env.LOCAL_POLLING === 'true'; // Replit'te test için manuel aktif et
+console.log(`🔧 Ortam: ${IS_RAILWAY ? 'RAILWAY' : 'REPLIT/LOKAL'} | Mod: ${WEBHOOK_URL_ACTIVE ? 'WEBHOOK → ' + WEBHOOK_URL_ACTIVE : IS_RAILWAY || LOCAL_POLLING ? 'POLLING' : 'SADECE-RSS (polling kapalı)'}`);
 
 function startBot() {
   publishNextNews();
@@ -4794,8 +4797,8 @@ http.createServer((req, res) => {
       startBot();
     })
     .catch(e => { console.error('❌ Webhook kurulamadı:', e.message); process.exit(1); });
-  } else {
-    // Lokal: polling modu
+  } else if (IS_RAILWAY || LOCAL_POLLING) {
+    // Railway veya LOCAL_POLLING=true: polling modu
     bot._request('deleteWebhook', { form: { drop_pending_updates: true } })
       .then(() => {
         bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
@@ -4803,6 +4806,11 @@ http.createServer((req, res) => {
         startBot();
       })
       .catch(e => { console.error('❌ Polling başlatılamadı:', e.message); process.exit(1); });
+  } else {
+    // Replit/lokal — polling YOK (Railway zaten çalışıyor, 409 engellemek için)
+    console.log('⏸️ Replit ortamı — polling kapalı. Sadece RSS yayın motoru çalışıyor.');
+    console.log('💡 Lokal Telegram testi için LOCAL_POLLING=true env ekle.');
+    startBot(); // RSS yayını ve zamanlayıcılar çalışır, Telegram polling olmaz
   }
 });
 
