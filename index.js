@@ -1820,12 +1820,9 @@ function sortByNeededMedia(items, needed) {
 function isLiveBroadcastImage(url) {
   if (!url) return false;
   const u = url.toLowerCase();
-  // URL tabanlı ipuçları
   if (/canl[iy][-_]?yayin|canliyayin|canli[-_]?tv|live[-_]?stream|live[-_]?broadcast|son[-_]?dakika[-_]?cover|breaking[-_]?cover|sd[-_]?kapak|sd[-_]?cover/.test(u)) return true;
-  // Türk haber kanallarının bilinen canlı yayın thumbnail URL kalıpları
-  if (//canli//i.test(u) && /.(jpg|jpeg|png|webp)/i.test(u)) return true;
-  // Genel "son dakika" overlay görselleri (sondakika cover, sd_default vb.)
-  if (/son.?dakika.{0,20}.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  if (u.includes('/canli/') && /.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  if (/son.{0,5}dakika.{0,20}.(jpg|jpeg|png|webp)/i.test(u)) return true;
   return false;
 }
 
