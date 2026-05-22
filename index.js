@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.16 — syntax fix: apostrof + catch blogu duzeltildi — 2026-05-22');
+console.log('🤖 Bot v2.17 — /ara 503 fix: fetchFeedXml+retry, syntax duzeltmeleri — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -4213,7 +4213,19 @@ bot.onText(/\/ara(?:\s+(.+))?/, async (msg, match) => {
 
   try {
     const searchUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(konu)}&hl=tr&gl=TR&ceid=TR:tr`;
-    const feed = await parser.parseURL(searchUrl);
+
+    // parser.parseURL yerine fetchFeedXml kullan — Google News 503 engeline karşı
+    let feedXml = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        feedXml = await fetchFeedXml(searchUrl);
+        break;
+      } catch (fetchErr) {
+        if (attempt === 3) throw fetchErr;
+        await new Promise(r => setTimeout(r, attempt * 1500));
+      }
+    }
+    const feed = await parser.parseString(feedXml);
     const allItems = (feed.items || [])
       .filter(it => {
         const title = it.title || '';
