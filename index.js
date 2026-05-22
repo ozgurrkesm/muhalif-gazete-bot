@@ -3598,6 +3598,10 @@ function adminPanelKeyboard() {
         { text: settings.paused ? '▶️ Devam Et' : '⏸ Duraklat', callback_data: 'admin_toggle_pause' },
       ],
       [
+        { text: '🚨 Son Dakika', callback_data: 'admin_sondakika' },
+        { text: '🔄 Haberleri Yenile', callback_data: 'admin_refresh' },
+      ],
+      [
         { text: '📊 İstatistik', callback_data: 'admin_stats' },
         { text: '📰 Kaynaklar', callback_data: 'admin_sources' },
       ],
@@ -4062,6 +4066,154 @@ bot.on('callback_query', async (query) => {
         }
       );
       break;
+
+    case 'admin_sondakika': {
+      await bot.answerCallbackQuery(query.id, { text: '🚨 Son dakika çekiliyor...' }).catch(() => {});
+      const sdStatusMsg = await bot.sendMessage(chatId, '🚨 Son dakika haberleri çekiliyor...').catch(() => null);
+      try {
+        const SD_SOURCES_ADMIN = [
+          'https://news.google.com/rss/search?q=%22son+dakika%22&hl=tr&gl=TR&ceid=TR:tr',
+          'https://news.google.com/rss/search?q=%22son+dakika%22+site:cumhuriyet.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+          'https://news.google.com/rss/search?q=%22son+dakika%22+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+          'https://news.google.com/rss/search?q=%22son+dakika%22+site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+          'https://www.cumhuriyet.com.tr/rss',
+        ];
+        const nowSd = Date.now();
+        const SIX_H = 6 * 60 * 60 * 1000;
+        const sdFetchResults = await Promise.allSettled(
+          SD_SOURCES_ADMIN.map(url =>
+            fetchFeedXml(url).then(xml => parser.parseString(xml)).then(f => f.items || []).catch(() => [])
+          )
+        );
+        const seenSdLinks = new Set();
+        const sdItems = [];
+        for (const r of sdFetchResults) {
+          if (r.status !== 'fulfilled') continue;
+          for (const item of r.value) {
+            const link = item.link || item.guid || '';
+            const title = item.title || '';
+            if (!link || seenSdLinks.has(link) || title.length < 10) continue;
+            if (BLOCKED_TITLE_PATTERNS.some(p => p.test(title))) continue;
+            seenSdLinks.add(link);
+            const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : 0;
+            if (pubDate && nowSd - pubDate > SIX_H) continue;
+            sdItems.push(item);
+          }
+        }
+        const isSD2 = (t) => /son dakika|flaş|acil|breaking/i.test(t || '');
+        sdItems.sort((a, b) => {
+          const diff = (isSD2(b.title) ? 1 : 0) - (isSD2(a.title) ? 1 : 0);
+          if (diff !== 0) return diff;
+          return (new Date(b.pubDate||0).getTime()) - (new Date(a.pubDate||0).getTime());
+        });
+        const topSdItems = sdItems.slice(0, 8);
+        if (topSdItems.length === 0) {
+          const noText = '❌ Son 6 saatte son dakika haberi bulunamadı.';
+          if (sdStatusMsg) await bot.editMessageText(noText, { chat_id: chatId, message_id: sdStatusMsg.message_id }).catch(() => bot.sendMessage(chatId, noText));
+          break;
+        }
+        pendingSdResults.set(String(chatId), topSdItems);
+        const timeAgoSd = (d) => {
+          if (!d) return '';
+          const diff = Math.floor((nowSd - new Date(d).getTime()) / 60000);
+          if (diff < 1) return ' · şimdi'; if (diff < 60) return ` · ${diff}dk önce`;
+          return ` · ${Math.floor(diff/60)}sa önce`;
+        };
+        let sdText = `🚨 *SON DAKİKA HABERLERİ*\n_Son 6 saat — ${topSdItems.length} haber_\n\n`;
+        topSdItems.forEach((item, i) => {
+          const t = stripNewsSource(cleanTitle(item.title||'')).slice(0,80);
+          sdText += `${isSD2(item.title)?'🔴':'📌'} *${i+1}.* ${t}${timeAgoSd(item.pubDate)}\n`;
+        });
+        sdText += `\n_Kanala yayınlamak için bir habere bas:_`;
+        const sdKeyboard = topSdItems.map((it, i) => [{
+          text: `📤 ${i+1}. ${stripNewsSource(cleanTitle(it.title||'')).slice(0,50)}`,
+          callback_data: `sd_publish_${i}`,
+        }]);
+        sdKeyboard.push([{ text: '❌ Kapat', callback_data: 'sd_cancel' }]);
+        if (sdStatusMsg) {
+          await bot.editMessageText(sdText, { chat_id: chatId, message_id: sdStatusMsg.message_id, parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup: { inline_keyboard: sdKeyboard } }).catch(async () => {
+            await bot.sendMessage(chatId, sdText, { parse_mode: 'Markdown', disable_web_page_preview: true, reply_markup: { inline_keyboard: sdKeyboard } });
+          });
+        }
+      } catch (err) {
+        const errText = `❌ Son dakika hatası: ${err.message.slice(0,200)}`;
+        if (sdStatusMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: sdStatusMsg.message_id }).catch(() => bot.sendMessage(chatId, errText));
+      }
+      break;
+    }
+
+    case 'admin_refresh': {
+      await bot.answerCallbackQuery(query.id, { text: '🔄 Tüm kaynaklar taranıyor...' }).catch(() => {});
+      const refreshMsg = await bot.sendMessage(chatId, '🔄 Tüm haber kaynakları yenileniyor, lütfen bekle...').catch(() => null);
+      try {
+        const activePool = RSS_FEEDS.filter(f => {
+          if (!matchesActiveCategory) return true;
+          return f.category === 'hepsi' || f.category === settings.activeCategory || settings.activeCategory === 'hepsi';
+        });
+        const limit = Math.min(activePool.length, 20);
+        const feedSlice = activePool.slice(0, limit);
+
+        const results = await Promise.allSettled(
+          feedSlice.map(f => fetchFeed(f).catch(() => []))
+        );
+
+        let totalNew = 0;
+        let totalItems = 0;
+        const sourcesSummary = [];
+
+        results.forEach((r, i) => {
+          const feed = feedSlice[i];
+          const items = r.status === 'fulfilled' ? r.value : [];
+          totalItems += items.length;
+          const newItems = items.filter(it => {
+            const url = it.link || it.guid;
+            return url && !publishedUrls.has(url);
+          });
+          totalNew += newItems.length;
+          if (newItems.length > 0) sourcesSummary.push(`• ${feed.label}: ${newItems.length} yeni`);
+        });
+
+        const summaryLines = sourcesSummary.slice(0, 10).join('\n');
+        const moreCount = sourcesSummary.length > 10 ? `\n… ve ${sourcesSummary.length - 10} kaynak daha` : '';
+
+        let refreshText =
+          `🔄 *Haber Güncelleme Tamamlandı*\n\n` +
+          `📡 Taranan kaynak: *${limit}/${activePool.length}*\n` +
+          `📰 Toplam haber: *${totalItems}*\n` +
+          `✨ Yeni haber: *${totalNew}*\n\n`;
+
+        if (summaryLines) refreshText += `*Kaynaklar:*\n${summaryLines}${moreCount}\n\n`;
+
+        if (totalNew > 0) {
+          refreshText += `_${totalNew} yeni haber mevcut — "Şimdi Yayınla" ile yayınlayabilirsin._`;
+        } else {
+          refreshText += `_Tüm haberler zaten işlendi, yeni içerik yok._`;
+        }
+
+        const refreshKeyboard = {
+          inline_keyboard: [
+            totalNew > 0
+              ? [{ text: '▶️ Şimdi Yayınla', callback_data: 'admin_publish_now' }]
+              : [],
+            [{ text: '◀️ Geri', callback_data: 'admin_back' }],
+          ].filter(r => r.length > 0),
+        };
+
+        if (refreshMsg) {
+          await bot.editMessageText(refreshText, {
+            chat_id: chatId, message_id: refreshMsg.message_id,
+            parse_mode: 'Markdown',
+            reply_markup: refreshKeyboard,
+          }).catch(async () => {
+            await bot.sendMessage(chatId, refreshText, { parse_mode: 'Markdown', reply_markup: refreshKeyboard });
+          });
+        }
+      } catch (err) {
+        const errText = `❌ Yenileme hatası: ${err.message.slice(0,200)}`;
+        if (refreshMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: refreshMsg.message_id }).catch(() => bot.sendMessage(chatId, errText));
+      }
+      break;
+    }
 
     case 'admin_back':
       await bot.answerCallbackQuery(query.id).catch(() => {});
