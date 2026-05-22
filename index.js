@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.15 — /ara detay metni, gorsel iyilestirme, admin fix — 2026-05-22');
+console.log('🤖 Bot v2.16 — syntax fix: apostrof + catch blogu duzeltildi — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3024,20 +3024,6 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
         sentMsg = await bot.sendPhoto(CHANNEL_ID, chosenMedia.url, sendOpts({ caption }));
         sentType = 'image';
       }
-    } catch (eSP) {
-      // URL olarak gönderilemedi → buffer olarak indir ve dene (hotlink koruması vb.)
-      console.log(`⚠️ sendPhoto URL başarısız, buffer deneniyor: ${eSP.message?.slice(0,80)}`);
-      const bufSP = await downloadImageBuffer(chosenMedia.url).catch(() => null);
-      if (bufSP) {
-        try {
-          sentMsg = await bot.sendPhoto(CHANNEL_ID, bufSP, sendOpts({ caption }));
-          sentType = 'image';
-          console.log('🖼 Buffer olarak gönderildi');
-        } catch (eBuf) {
-          console.log(`❌ Buffer da başarısız: ${eBuf.message?.slice(0,80)}`);
-        }
-      }
-    }
     } else {
         // Medya yok → DDG görsel dene → atla (metin ASLA)
         const ddgImg2 = await fetchDuckDuckGoImage(title).catch(() => null);
@@ -3706,8 +3692,8 @@ bot.onText(/\/admin/, async (msg) => {
         '🔐 Admin paneline erişmek için:\n\n' +
         '`/setadmin <şifre>`\n\n' +
         'Şifreyi bilen kişi admin olabilir.\n\n' +
-        '💡 Railway'de her restart'ta şifreyi tekrar girmen gerekebilir. ' +
-        'Kalıcı admin için: /chatid komutunu kullan ve ADMIN\_CHAT\_ID değişkenini Railway'e ekle.',
+        '💡 Railway\'de her restart\'ta şifreyi tekrar girmen gerekebilir. ' +
+        'Kalıcı admin için: /chatid komutunu kullan ve ADMIN\\_CHAT\\_ID değişkenini Railway\'e ekle.',
         { parse_mode: 'Markdown' }
       );
       return;
