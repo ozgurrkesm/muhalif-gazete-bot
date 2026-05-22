@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.13 — OG gorsel iyilestirme: Referer header, JSON-LD, buffer fallback — 2026-05-22');
+console.log('🤖 Bot v2.14 — admin startup fix, /ara detay metni, gorsel iyilestirme — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3694,16 +3694,24 @@ bot.onText(/\/myid/, (msg) => {
   bot.sendMessage(chatId, `🪪 Chat ID'niz:\n\n<code>${chatId}</code>\n\nBu sayıyı Railway'de <b>ADMIN_CHAT_ID</b> olarak kaydedin.`, { parse_mode: 'HTML' });
 });
 
-bot.onText(/\/admin/, (msg) => {
+bot.onText(/\/admin/, async (msg) => {
   const chatId = String(msg.chat.id);
   if (!isAdmin(chatId)) {
-    bot.sendMessage(msg.chat.id,
-      '🔐 Admin paneline erişmek için:\n\n' +
-      '`/setadmin <şifre>`\n\n' +
-      'Şifreyi bilen kişi admin olabilir.',
-      { parse_mode: 'Markdown' }
-    );
-    return;
+    // DB yükleniyorsa kısa süre bekle — Railway restart sonrası race condition
+    if (!dbReady && process.env.DATABASE_URL) {
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    if (!isAdmin(chatId)) {
+      bot.sendMessage(msg.chat.id,
+        '🔐 Admin paneline erişmek için:\n\n' +
+        '`/setadmin <şifre>`\n\n' +
+        'Şifreyi bilen kişi admin olabilir.\n\n' +
+        '💡 Railway'de her restart'ta şifreyi tekrar girmen gerekebilir. ' +
+        'Kalıcı admin için: /chatid komutunu kullan ve ADMIN\_CHAT\_ID değişkenini Railway'e ekle.',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
   }
   bot.sendMessage(msg.chat.id, adminPanelText(), {
     parse_mode: 'Markdown',
@@ -3857,14 +3865,22 @@ bot.on('callback_query', async (query) => {
 
     // Özet başlıkla aynıysa veya çok kısaysa ekleme
     const normStr = (s) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const summaryIsTitle = aiSummary && (
-      normStr(aiSummary) === normStr(title) ||
-      normStr(title).includes(normStr(aiSummary).slice(0, 40)) ||
-      normStr(aiSummary).slice(0, 60) === normStr(title).slice(0, 60)
-    );
+    const isTextSameAsTitle = (text) => {
+      if (!text || text.length < 20) return true;
+      const t = normStr(title), tx = normStr(text);
+      return tx === t || tx.startsWith(t.slice(0, 50)) || t.startsWith(tx.slice(0, 50));
+    };
+    const summaryIsTitle = aiSummary && isTextSameAsTitle(aiSummary);
+
+    // Detay metni: AI özeti → OG açıklama → RSS özeti (AI yoksa bile göster)
+    const detailText = (!summaryIsTitle && aiSummary && aiSummary.length > 30)
+      ? aiSummary
+      : (!isTextSameAsTitle(description) && description && description.length > 30)
+        ? description.slice(0, 700)
+        : null;
 
     let caption = `${catE}*${title}*`;
-    if (aiSummary && !summaryIsTitle && aiSummary.length > 30) caption += `\n\n${cleanArrows(aiSummary)}`;
+    if (detailText) caption += `\n\n${cleanArrows(stripLinks(detailText))}`;
     caption = caption.slice(0, 1024);
 
     // Başlıktaki Markdown özel karakterleri (*, _, [, ]) escape et
@@ -4617,17 +4633,22 @@ console.log(`📂 Aktif kategori: ${settings.activeCategory}`);
 console.log(`📰 Kaynak sayısı: ${RSS_FEEDS.length} (${RSS_FEEDS.filter(f=>f.type==='youtube').length} YouTube)`);
 console.log(`🔑 Admin şifresi ayarlı: ${ADMIN_PASSWORD !== 'admin2024' ? 'Evet' : 'Hayır (varsayılan)'}`);
 
-// PostgreSQL DB'yi başlat (async — bot başlatmayı bloke etmez)
+// PostgreSQL DB'yi başlat — tamamlandıktan sonra bot işlemlerini başlat
+// Böylece adminChatIds vs. DB'den yüklenmiş olur, race condition olmaz
 initDatabase().then(() => {
-  console.log('🗄️ Veritabanı başlatıldı');
+  console.log('🗄️ Veritabanı başlatıldı — bot işlemleri başlatılıyor');
+  publishNextNews();
+  resetInterval();
+  startBreakingNewsChecker();
+  checkBreakingNews();
 }).catch(e => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
+  // DB olmasa da bot çalışmaya devam etsin
+  publishNextNews();
+  resetInterval();
+  startBreakingNewsChecker();
+  checkBreakingNews();
 });
-
-publishNextNews();
-resetInterval();
-startBreakingNewsChecker();
-checkBreakingNews(); // İlk kontrol hemen yap
 
 // Başlangıçta bir YouTube videosu kanala gönder
 setTimeout(() => {
