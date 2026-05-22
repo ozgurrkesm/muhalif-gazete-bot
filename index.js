@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.21 — canli yayin gorsel filtresi eklendi — 2026-05-22');
+console.log('🤖 Bot v2.23 — canli yayin baslik filtresi + 144p CDN duzeltmesi — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -1820,37 +1820,60 @@ function sortByNeededMedia(items, needed) {
 function isLiveBroadcastImage(url) {
   if (!url) return false;
   const u = url.toLowerCase();
-  if (/canl[iy][-_]?yayin|canliyayin|canli[-_]?tv|live[-_]?stream|live[-_]?broadcast|son[-_]?dakika[-_]?cover|breaking[-_]?cover|sd[-_]?kapak|sd[-_]?cover/.test(u)) return true;
-  if (u.includes('/canli/') && /.(jpg|jpeg|png|webp)/i.test(u)) return true;
-  if (/son.{0,5}dakika.{0,20}.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  // Açık canlı yayın URL kalıpları
+  if (/canl[iy][-_]?yayin|canliyayin|canli[-_]?tv|live[-_]?stream|live[-_]?broadcast/.test(u)) return true;
+  if (/son[-_]?dakika[-_]?cover|breaking[-_]?cover|sd[-_]?kapak|sd[-_]?cover/.test(u)) return true;
+  // Türk haber kanallarının bilinen yolu: /canli/ klasörü
+  if (u.includes('/canli/') && /\.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  // ntv/cnn/haberturk vb. canlı yayın görselleri
+  if (/(ntv|cnnturk|haberturk|trtworld|trthaber|a2tv|teve2|fox[-_]?tv|showtv|atv|kanal[d7]|bloomberg|360tv)[./].*canl/i.test(u)) return true;
+  // "canli" kelimesi path segmentinde
+  if (/\/canli[-_]|[-_]canli\//.test(u)) return true;
   return false;
+}
+
+// Başlık bazlı canlı yayın tespiti — URL filtresi yakalamasa bile
+function isLiveBroadcastTitle(title) {
+  if (!title) return false;
+  return /\bcanl[iı]\s*(yayin|yayını?|anlatim|bağlantı|yayın)|\blive\s*stream|\bcanl[iı]\b.*\byayin/i.test(title);
 }
 
 
 function upgradeImageUrl(url) {
   if (!url) return url;
-  return url
-    .replace(/([?&])w=\d+/g, '$1')
-    .replace(/([?&])h=\d+/g, '$1')
-    .replace(/([?&])width=\d+/g, '$1')
-    .replace(/([?&])height=\d+/g, '$1')
-    .replace(/([?&])resize=\d+,\d+/g, '$1')
-    .replace(/([?&])fit=\d+,\d+/g, '$1')
-    .replace(/([?&])size=\d+/g, '$1')
-    .replace(/([?&])q=\d+/g, '$1quality=95')
-    .replace(/\?&+/g, '?').replace(/&&+/g, '&').replace(/[?&]$/g, '')
-    .replace(/_\d+x\d+\.(jpg|jpeg|png|webp)/i, '.$1')
-    .replace(/-\d+x\d+\.(jpg|jpeg|png|webp)/i, '.$1')
-    .replace(/\/\d+x\d+\//i, '/full/')
-    .replace(/\/small\//i, '/large/')
-    .replace(/\/thumb\//i, '/full/')
-    .replace(/\/thumbnail\//i, '/original/')
-    .replace(/\/medium\//i, '/large/')
-    .replace(/\/low\//i, '/high/')
-    .replace(/\/preview\//i, '/original/')
-    .replace(/\/hqdefault\.jpg/, '/maxresdefault.jpg')
-    .replace(/\/mqdefault\.jpg/, '/maxresdefault.jpg')
-    .replace(/\/sddefault\.jpg/, '/maxresdefault.jpg');
+  let u = url;
+  // ── Query param boyut temizliği ──────────────────────────────────────
+  // Boyut parametrelerini sil (w, h, width, height, s, size, resize vb.)
+  u = u.replace(/([?&])(w|h|width|height|s|size|resize|fit|crop|thumb|thumbnail|dim|dims|maxw|maxh|wid|hei)=[d,x]+/gi, (_, sep) => sep);
+  // Kalite parametresini yüksek tut (q, quality, qual)
+  u = u.replace(/([?&])(?:q|quality|qual)=d+/gi, '$1q=95');
+  // format=webp veya format=jpg bırak, format=thumb kaldır
+  u = u.replace(/([?&])format=(?:thumb|thumbnail|small|low|preview)/gi, (_, sep) => sep);
+  // Temizlik: ?& && sondaki ? veya &
+  u = u.replace(/[?&]([?&])+/g, (m) => m[0]).replace(/[?&]$/g, '');
+  // Boş soru işareti kaldır
+  u = u.replace(/\?$/, '');
+
+  // ── Path tabanlı boyut temizliği (Türk CDN'leri) ────────────────────
+  // /144x81/ /300x200/ /800x600/ → orijinal yol
+  u = u.replace(/\/\d{2,4}x\d{2,4}\//gi, '/');
+  // _144x81.jpg -300x200.jpg → .jpg
+  u = u.replace(/[_-]\d{2,4}x\d{2,4}(\.(jpg|jpeg|png|webp|gif))/gi, '$1');
+  // /thumb/ /small/ /medium/ /low/ /preview/ → /
+  u = u.replace(/\/(thumb|small|medium|low|preview|thumbnail|mini|tiny|crop)\//gi, '/');
+  // /original/ /large/ /full/ /high/ → zaten büyük, bırak
+
+  // ── YouTube kalite yükseltme ─────────────────────────────────────────
+  u = u.replace(/\/(hqdefault|mqdefault|sddefault|default)\.jpg/, '/maxresdefault.jpg');
+
+  // ── Sabah/NTV/Haberler tipi CDN kalıpları ────────────────────────────
+  // ia.sabah.com.tr/thumb/144/81/... → /thumb/0/0/...
+  u = u.replace(/(sabah\.com\.tr\/thumb\/?)\d+\/\d+\//, '$10/0/');
+  // Haberler.com: resize/144x81/ kaldır
+  u = u.replace(/\/resize\/[\d]+x[\d]+\//gi, '/');
+  // NTV: -144x81 zaten üstte yakalandı
+
+  return u;
 }
 
 // ─── Video İndirme ───────────────────────────────────────────────────────────
@@ -2718,7 +2741,14 @@ async function publishNowInstant() {
         // Caption oluştur
         { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
         if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
+        // Başlıkta "CANLI YAYIN" varsa görsel almayalım
+        if (isLiveBroadcastTitle(title)) {
+          rssMedia.type = null; rssMedia.url = null;
+          console.log(`🚫 Canlı yayın başlığı — görsel atlandı: ${title.slice(0,60)}`);
+        }
         let ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+        // og:image da canlı yayın filtresi
+        if (ogImg && isLiveBroadcastImage(ogImg)) { console.log(`🚫 og:image canlı yayın — atlandı: ${ogImg.slice(0,60)}`); ogImg = null; }
         const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
 
         // ═══ 2. Sayfadaki gömülü video var mı? (Google News değilse) ════
@@ -2977,6 +3007,12 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
 
     let media = extractMedia(candidate);
     if (media.url) { media.url = upgradeImageUrl(media.url); }
+    // Başlıkta canlı yayın varsa görseli temizle
+    const _cTitle = candidate.title || '';
+    if (isLiveBroadcastTitle(_cTitle) || (media.url && isLiveBroadcastImage(media.url))) {
+      console.log(`🚫 Canlı yayın (başlık/url) — görsel silindi: ${_cTitle.slice(0,60)}`);
+      media = { type: null, url: null };
+    }
 
     // Web sayfasından video çıkar (30s timeout)
     if (!media.url || media.type !== 'video') {
