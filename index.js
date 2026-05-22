@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.17 — /ara 503 fix: fetchFeedXml+retry, syntax duzeltmeleri — 2026-05-22');
+console.log('🤖 Bot v2.18 — /ara detay fix: articleBody fallback, isTextSameAsTitle duzeltildi — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -3833,37 +3833,43 @@ bot.on('callback_query', async (query) => {
       // AI özeti: görsel aramayla PARALEL başlat — sırayla bekleme, ikisi aynı anda koşsun
       const aiSummary = await summarizeNewsDetailed(title, description, ogMeta.articleBody || null).catch(() => null);
 
-      console.log(`✅ [ara] Tamamlandı — imageUrl=${imageUrl ? imageUrl.slice(0,60) : 'null'} | aiSummary=${aiSummary ? aiSummary.slice(0,40)+'…' : 'null'}`);
-      return { imageUrl, description, aiSummary };
+      console.log(`✅ [ara] Tamamlandı — imageUrl=${imageUrl ? imageUrl.slice(0,60) : 'null'} | aiSummary=${aiSummary ? aiSummary.slice(0,40)+'…' : 'null'} | articleBody=${ogMeta.articleBody ? ogMeta.articleBody.length+'chr' : 'null'}`);
+      return { imageUrl, description, aiSummary, articleBody: ogMeta.articleBody || null };
     };
 
     // Timeout 45s — paralel fetch (~19s) + AI (~10s) = ~29s, güvenli marj için 45s
-    const { imageUrl, description, aiSummary } = await Promise.race([
+    const { imageUrl, description, aiSummary, articleBody } = await Promise.race([
       fetchData(),
       new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 45000)),
     ]).catch((err) => {
       console.error('❌ [ara] fetchData timeout/hata:', err?.message);
-      return { imageUrl: null, description: baseDesc, aiSummary: null };
+      return { imageUrl: null, description: baseDesc, aiSummary: null, articleBody: null };
     });
 
     const categoryTag = detectCategory(title, description);
     const catE = categoryTag ? `${categoryTag} ` : '';
 
-    // Özet başlıkla aynıysa veya çok kısaysa ekleme
     const normStr = (s) => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    // Sadece başlığın TAM tekrarıysa veya 25 karakterden az fazla içeriği varsa filtrele
     const isTextSameAsTitle = (text) => {
       if (!text || text.length < 20) return true;
       const t = normStr(title), tx = normStr(text);
-      return tx === t || tx.startsWith(t.slice(0, 50)) || t.startsWith(tx.slice(0, 50));
+      if (tx === t) return true;
+      // Başlıkla neredeyse aynı — fazladan anlamlı içerik yok
+      if (tx.startsWith(t) && tx.length < t.length + 25) return true;
+      if (t.startsWith(tx) && tx.length < t.length + 10) return true;
+      return false;
     };
     const summaryIsTitle = aiSummary && isTextSameAsTitle(aiSummary);
 
-    // Detay metni: AI özeti → OG açıklama → RSS özeti (AI yoksa bile göster)
+    // Detay metni: AI özeti → OG açıklama → makale gövdesi → RSS özeti
     const detailText = (!summaryIsTitle && aiSummary && aiSummary.length > 30)
       ? aiSummary
       : (!isTextSameAsTitle(description) && description && description.length > 30)
         ? description.slice(0, 700)
-        : null;
+        : (articleBody && articleBody.length > 60 && !isTextSameAsTitle(articleBody))
+          ? articleBody.slice(0, 700)
+          : null;
 
     let caption = `${catE}*${title}*`;
     if (detailText) caption += `\n\n${cleanArrows(stripLinks(detailText))}`;
