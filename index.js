@@ -148,7 +148,7 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
+  polling: { interval: 100, autoStart: false, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
 });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
@@ -735,16 +735,19 @@ async function initDatabase() {
   }
   try {
     const pgModule = await import('pg');
-    const { Pool } = pgModule.default || pgModule;
-    // Pool: concurrent query'leri destekler (Client tek bağlantıya kilitlenir → DeprecationWarning)
+    const { Client } = pgModule.default || pgModule;
+    // Önce SSL ile dene, olmazsa SSL'siz bağlan (Railway iç network SSL desteklemez)
     try {
-      pgClient = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 });
-      await pgClient.query('SELECT 1');
+      pgClient = new Client({
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      });
+      await pgClient.connect();
     } catch (sslErr) {
       if (sslErr.message.includes('SSL') || sslErr.message.includes('ssl')) {
         console.log(`ℹ️ SSL desteklenmiyor, SSL'siz bağlanılıyor...`);
-        pgClient = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
-        await pgClient.query('SELECT 1');
+        pgClient = new Client({ connectionString: process.env.DATABASE_URL });
+        await pgClient.connect();
       } else {
         throw sslErr;
       }
@@ -3840,26 +3843,35 @@ bot.on('callback_query', async (query) => {
         if (ok) sentMsg = { message_id: null };
       }
       if (!sentMsg && imgUrl) {
-        try {
-          sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption, parse_mode: 'Markdown' });
-        } catch {
-          // URL ile olmadı, buffer dene
+        // Markdown ile dene, olmadı plain caption ile dene
+        const plainCap = caption.replace(/[*_`\[\]]/g, '').trim();
+        try { sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption, parse_mode: 'Markdown' }); }
+        catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption: plainCap }); } catch {} }
+        if (!sentMsg) {
           const buf = await downloadImageBuffer(imgUrl).catch(() => null);
           if (buf) {
-            try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption, parse_mode: 'Markdown' }); } catch {}
+            try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption, parse_mode: 'Markdown' }); }
+            catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption: plainCap }); } catch {} }
           }
         }
       }
       if (!sentMsg) {
-        // Görsel/video yok → DDG dene
+        const plainCap = caption.replace(/[*_`\[\]]/g, '').trim();
         const ddg = await fetchDuckDuckGoImage(title).catch(() => null);
         if (ddg) {
-          try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption, parse_mode: 'Markdown' }); } catch {}
+          try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption, parse_mode: 'Markdown' }); }
+          catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption: plainCap }); } catch {} }
         }
       }
       if (!sentMsg) {
-        // Son çare: sadece metin
-        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
+        // Son çare: metin — Markdown ile dene, olmadı plain text
+        const plainCaption = caption.replace(/[*_`\[\]]/g, '').trim();
+        try {
+          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
+        } catch {}
+        if (!sentMsg) {
+          sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false }).catch(() => null);
+        }
       }
 
       publishedUrls.add(rawLink);
@@ -3873,7 +3885,8 @@ bot.on('callback_query', async (query) => {
       }).catch(() => {});
     } catch (e) {
       console.error('❌ sd_publish_ hata:', e.message);
-      await bot.answerCallbackQuery(query.id, { text: `❌ Hata: ${e.message.slice(0, 60)}` });
+      // answerCallbackQuery zaten çağrıldı — admin'e doğrudan mesaj gönder
+      bot.sendMessage(chatId, `❌ Yayınlama hatası:\n${e.message.slice(0, 200)}`).catch(() => {});
     }
     return;
   }
@@ -4777,10 +4790,29 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-publishNextNews();
-resetInterval();
-startBreakingNewsChecker();
-checkBreakingNews(); // İlk kontrol hemen yap
+// ─── Güvenli Başlangıç — eski instance polling'i bitmeden yenisi başlamasın ──
+async function safeStart() {
+  try {
+    console.log('⏳ Telegram bağlantısı temizleniyor (409 önlemi)...');
+    // Önce webhook sil + pending updates temizle
+    await bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+    // Eski instance'ın kapanması için bekle (Railway rolling deploy — 8sn yeterli)
+    await new Promise(r => setTimeout(r, 8000));
+    // Polling başlat
+    await bot.startPolling({ restart: false }).catch(e => {
+      console.error('⚠️ startPolling hatası:', e.message);
+    });
+    console.log('✅ Polling başlatıldı.');
+  } catch (e) {
+    console.error('❌ safeStart hatası:', e.message);
+  }
+  publishNextNews();
+  resetInterval();
+  startBreakingNewsChecker();
+  checkBreakingNews(); // İlk kontrol hemen yap
+}
+
+safeStart();
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
