@@ -52,7 +52,7 @@ import OpenAI from 'openai';
 
       // Yanıt için 120 sn bekle (3 sn aralıklarla kontrol)
       for (let i = 0; i < 40; i++) {
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 8000));
         const messages = await client.getMessages('@vide', { limit: 3 });
         const videoMsg = messages.find(m =>
           m.media && (m.media.className === 'MessageMediaDocument' || m.media.className === 'MessageMediaVideo')
@@ -2578,7 +2578,7 @@ async function fetchFeedXml(url, maxRedirects = 5) {
 async function fetchFeed(feed) {
   try {
     let xml = await fetchFeedXml(feed.url);
-    // Geçersiz XML entity'lerini temizle (& → &amp;) — NTV Spor ve benzeri beslemeler için
+    // Bozuk RSS feed'lerindeki geçersiz XML entity'leri düzelt
     xml = xml.replace(/&(?!(amp|lt|gt|quot|apos|#\d+|#x[\da-fA-F]+);)/g, '&amp;');
     const result = await parser.parseString(xml);
     return result.items || [];
@@ -4786,8 +4786,8 @@ async function safeStart() {
     console.log('⏳ Telegram bağlantısı temizleniyor (409 önlemi)...');
     // Önce webhook sil + pending updates temizle
     await bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
-    // Eski instance'ın kapanması için kısa bekle (Railway rolling deploy)
-    await new Promise(r => setTimeout(r, 3000));
+    // Eski instance'ın kapanması için bekle (Railway rolling deploy — 8sn yeterli)
+    await new Promise(r => setTimeout(r, 8000));
     // Polling başlat
     await bot.startPolling({ restart: false }).catch(e => {
       console.error('⚠️ startPolling hatası:', e.message);
