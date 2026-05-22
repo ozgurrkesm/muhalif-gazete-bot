@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.14 — admin startup fix, /ara detay metni, gorsel iyilestirme — 2026-05-22');
+console.log('🤖 Bot v2.15 — /ara detay metni, gorsel iyilestirme, admin fix — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -4633,22 +4633,17 @@ console.log(`📂 Aktif kategori: ${settings.activeCategory}`);
 console.log(`📰 Kaynak sayısı: ${RSS_FEEDS.length} (${RSS_FEEDS.filter(f=>f.type==='youtube').length} YouTube)`);
 console.log(`🔑 Admin şifresi ayarlı: ${ADMIN_PASSWORD !== 'admin2024' ? 'Evet' : 'Hayır (varsayılan)'}`);
 
-// PostgreSQL DB'yi başlat — tamamlandıktan sonra bot işlemlerini başlat
-// Böylece adminChatIds vs. DB'den yüklenmiş olur, race condition olmaz
+// PostgreSQL DB'yi başlat (async — bot başlatmayı bloke etmez)
 initDatabase().then(() => {
-  console.log('🗄️ Veritabanı başlatıldı — bot işlemleri başlatılıyor');
-  publishNextNews();
-  resetInterval();
-  startBreakingNewsChecker();
-  checkBreakingNews();
+  console.log('🗄️ Veritabanı başlatıldı');
 }).catch(e => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
-  // DB olmasa da bot çalışmaya devam etsin
-  publishNextNews();
-  resetInterval();
-  startBreakingNewsChecker();
-  checkBreakingNews();
 });
+
+publishNextNews();
+resetInterval();
+startBreakingNewsChecker();
+checkBreakingNews(); // İlk kontrol hemen yap
 
 // Başlangıçta bir YouTube videosu kanala gönder
 setTimeout(() => {
