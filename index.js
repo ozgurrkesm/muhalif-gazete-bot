@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.25 — video orani %33 hedef + YouTube rotasyon duzeltmesi + 8 yeni kanal — 2026-05-22');
+console.log('🤖 Bot v2.26 — YouTube kaldirildi web gomulu video aktif — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -461,91 +461,7 @@ const RSS_FEEDS = [
     type: 'google',
     category: 'ekonomi',
   },
-  // ── Muhalif YouTube Kanalları ──────────────────────────────────────────────
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCf_ResXZzE-o18zACUEmyvQ',
-    label: '▶️ Halk TV YouTube',
-    source: 'Halk TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCbq0bGdShXK5dMzEDU7nThA',
-    label: '▶️ NOW Haber YouTube',
-    source: 'NOW Haber',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCo_RGmsTwCBt6VIgU0IQEHA',
-    label: '▶️ Tele1 YouTube',
-    source: 'Tele1',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCpHBnE7RdmHCopCJEDYkiEA',
-    label: '▶️ CHP TV YouTube',
-    source: 'CHP TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCYXe_Lq4D_MAlNUH_VJEGWg',
-    label: '▶️ KRT TV YouTube',
-    source: 'KRT TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCVbQ5vdC_LLvO0d9IYXX9lw',
-    label: '▶️ Medyascope YouTube',
-    source: 'Medyascope',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC0j2KNkVNR_WOeUP_SMSOSA',
-    label: '▶️ Sözcü TV YouTube',
-    source: 'Sözcü TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCZiY_uo5cN4q4AKLR-E1_gA',
-    label: '▶️ Artı TV YouTube',
-    source: 'Artı TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCXL7TBVn4-WCLkBqGaE49og',
-    label: '▶️ Artı Gerçek YouTube',
-    source: 'Artı Gerçek',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC0j2KNkVNR_WOeUP_SMSOSA',
-    label: '▶️ T24 YouTube',
-    source: 'T24',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCq0n_6XAGcALWZn7VakSjhg',
-    label: '▶️ Fox TV YouTube',
-    source: 'Fox TV',
-    type: 'youtube',
-    category: 'video',
-  },
-  {
-    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCzZdZZLDJKxRvwXMvE1J8vg',
-    label: '▶️ Cumhuriyet YouTube',
-    source: 'Cumhuriyet',
-    type: 'youtube',
-    category: 'video',
-  },
+  // YouTube feed'leri kaldırıldı — web gömülü video kullanılıyor
   {
     url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr+video&hl=tr&gl=TR&ceid=TR:tr',
     label: '▶️ Sözcü Video',
@@ -948,11 +864,9 @@ function getNeededMediaType() {
   if (total === 0) return 'image';
   const imageRatio = mediaStats.image / total;
   const videoRatio = mediaStats.video / total;
-  // Her 3 haberden 1'i video olsun (%33 hedef)
-  if (videoRatio < 0.33) return 'video';
-  // Görsel oranını da dengede tut
-  if (imageRatio < 0.60) return 'image';
-  return 'video'; // Varsayılan: video ara
+  // Her 4 haberden 1'i web gömülü video olsun (%25 hedef)
+  if (videoRatio < 0.25) return 'video';
+  return 'image';
 }
 
 // ─── Medya Çıkarma ────────────────────────────────────────────────────────────
@@ -2608,36 +2522,10 @@ function getActiveFeed() {
     if (pool.length === 0) pool = RSS_FEEDS;
   }
 
-  const needed = getNeededMediaType();
-
-  // Video gerektiğinde: YouTube feed'lerini önce dene
-  if (needed === 'video') {
-    // Önce bu pool'daki YouTube'ları ara, yoksa global YouTube listesinden al
-    const ytInPool = pool.filter((f) => f.type === 'youtube');
-    const ytFeeds = ytInPool.length > 0
-      ? ytInPool
-      : RSS_FEEDS.filter((f) => f.type === 'youtube');
-    if (ytFeeds.length > 0) {
-      const idx = currentFeedIndex % ytFeeds.length;
-      currentFeedIndex++;
-      return ytFeeds[idx];
-    }
-  }
-
-  // Normal rotasyon: YouTube'u her 3'te 1 sıraya koy (artık sona değil)
-  const nonYt = pool.filter((f) => f.type !== 'youtube');
-  const yt = pool.filter((f) => f.type === 'youtube');
-  // Her 3 feed'den biri YouTube olsun
-  const orderedPool = [];
-  let ytIdx = 0, nIdx = 0;
-  while (nIdx < nonYt.length || ytIdx < yt.length) {
-    if (nIdx < nonYt.length) orderedPool.push(nonYt[nIdx++]);
-    if (nIdx < nonYt.length) orderedPool.push(nonYt[nIdx++]);
-    if (ytIdx < yt.length)  orderedPool.push(yt[ytIdx++]);
-  }
-  const idx = currentFeedIndex % orderedPool.length;
+  // Düz rotasyon — sadece web feed'leri
+  const idx = currentFeedIndex % pool.length;
   currentFeedIndex++;
-  return orderedPool[idx];
+  return pool[idx];
 }
 
 // Aktif kategorinin feed listesini döndür (döngü sayacı için)
@@ -2775,34 +2663,6 @@ async function publishNowInstant() {
       let sentType = 'none';
 
       try {
-        // ═══ YouTube feed ════════════════════════════════════════════════
-        if (feed.type === 'youtube') {
-          // YouTube için caption hemen oluştur
-          { const aiS = await summarizeNews(title, rawDesc || description); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
-          console.log(`⚡ [ŞY] YouTube: ${url.slice(0, 60)}`);
-          const ok = await sendYouTubeVideoSmart(CHANNEL_ID, url, caption);
-          if (ok) {
-            sentType = 'video'; mediaStats.video++;
-            publishedUrls.add(url); persistPublishedUrls();
-            await notifyFilterUsers(title, rawDesc, url);
-            console.log(`✅ [ŞY] YouTube video: ${title.slice(0, 50)}`);
-            return '✅ Video yayınlandı! 🎬';
-          }
-          // YouTube başarısız — sayfadaki gömülü video var mı dene
-          tgLog(`⚠️ YouTube gönderilemedi, sayfa videosu aranıyor...`);
-          const ytPageVid = await fetchArticleHtmlAndExtractVideo(url);
-          if (ytPageVid && !/youtube|youtu\.be/i.test(ytPageVid)) {
-            const ok2 = await sendWebVideo(CHANNEL_ID, ytPageVid, caption);
-            if (ok2) {
-              sentType = 'video'; mediaStats.video++;
-              publishedUrls.add(url); persistPublishedUrls();
-              await notifyFilterUsers(title, rawDesc, url);
-              return '✅ Video yayınlandı! 🎬';
-            }
-          }
-          continue;
-        }
-
         // ═══ Google News → gerçek URL ════════════════════════════════════
         let realUrl = url;
         if (url.includes('news.google.com')) {
@@ -2994,60 +2854,6 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
 
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
-  if (feed.type === 'youtube') {
-    const item = validItems[0];
-    const url = item.link || item.guid;
-
-    const { title: checkTitle } = buildItemMeta(item, feed);
-    if (isTitleDuplicate(checkTitle)) {
-      console.log(`⏭ Başlık zaten yayınlandı (session): ${checkTitle.slice(0, 40)}`);
-      return;
-    }
-
-    publishedUrls.add(url);
-    persistPublishedUrls();
-
-    const { title, rawDesc, sonDakika, prefix } = buildItemMeta(item, feed);
-    const aiSummary = await summarizeNews(title, rawDesc);
-    const categoryTag = detectCategory(title, rawDesc);
-
-    const catEmoji = categoryTag ? `${categoryTag} ` : '';
-    let caption = stripLinks(`${prefix}${catEmoji}${title}`);
-    if (aiSummary && aiSummary.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
-    if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
-
-    const replyToId = findRelatedMessageId(title);
-
-    const videoId = item.videoId || (url.match(/[?&]v=([^&]+)/) || [])[1] || (url.match(/youtu\.be\/([^?]+)/) || [])[1];
-    const thumbUrl = videoId
-      ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`
-      : (() => { const mg = item.mediaGroup || item['media:group']; return mg?.['media:thumbnail']?.[0]?.$?.url ? upgradeImageUrl(mg['media:thumbnail'][0].$.url) : null; })();
-
-    let sentMsg = null;
-    let sentType = 'image';
-
-    const replyParam = replyToId ? { reply_parameters: { message_id: replyToId, allow_sending_without_reply: true } } : {};
-
-    // 1. YouTube videoyu indir, Telegram'a gönder
-    const videoSent = await sendYouTubeVideoSmart(CHANNEL_ID, url, caption);
-    if (videoSent) {
-      sentType = 'video';
-      if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
-      console.log(`✅ [${feed.source}] [youtube/video]${replyToId ? ' [reply]' : ''} ${title.slice(0, 50)}`);
-      mediaStats.video++;
-      const t = mediaStats.image + mediaStats.video + mediaStats.text;
-      console.log(`📊 Resim:%${Math.round(mediaStats.image/t*100)} Video:%${Math.round(mediaStats.video/t*100)} Metin:%${Math.round(mediaStats.text/t*100)}`);
-      if (sonDakika && sentMsg?.message_id) await tryPin(sentMsg.message_id);
-      await notifyFilterUsers(title, rawDesc, url);
-    } else {
-      // Video indirilemedi — YouTube'dan resim GÖNDERME, haberi bu session'da atla
-      console.log(`⏭ YouTube video indirilemedi, thumbnail gönderilmiyor — haber atlanıyor: ${title.slice(0,50)}`);
-      // URL'yi publishedUrls'te bırak (sil değil) — aynı haberi tekrar deneme
-      // Sadece session'da atla, kalıcı olarak kaydedilmiş durumda
-    }
-    return;
-  }
-
   // ── Normal haber — medyalı öğe bul (max 10 deneme) ────────────────────────
   const MAX_TRIES = 10;
   let chosenItem = null;
