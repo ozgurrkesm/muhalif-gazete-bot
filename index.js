@@ -4749,9 +4749,20 @@ bot.onText(/\/saglik/, async (msg) => {
 
     await send('✅ *Debug tamamlandı!*', { parse_mode: 'Markdown' });
   });
-bot.on('polling_error', (err) => {
+let _409backoff = false;
+bot.on('polling_error', async (err) => {
   trackError('polling', err.message);
-  console.error(`⚠️ Polling hatası: ${err.message}`);
+  if (err.message.includes('409') && !_409backoff) {
+    _409backoff = true;
+    console.warn('⚠️ 409 Conflict — eski instance kapanana kadar 30s bekleniyor...');
+    await bot.stopPolling().catch(() => {});
+    await new Promise(r => setTimeout(r, 30000));
+    console.log('🔄 Polling yeniden başlatılıyor...');
+    await bot.startPolling().catch(e => console.error('⚠️ Polling restart hatası:', e.message));
+    _409backoff = false;
+  } else if (!err.message.includes('409')) {
+    console.error(`⚠️ Polling hatası: ${err.message}`);
+  }
 });
 
 // ─── Temiz Kapanış ────────────────────────────────────────────────────────────
