@@ -779,8 +779,8 @@ async function initDatabase() {
     const [settingsRes, usersRes, urlsRes, titlesRes] = await Promise.all([
       pgClient.query("SELECT value FROM bot_settings WHERE key = 'settings'"),
       pgClient.query('SELECT chat_id, data FROM bot_users'),
-      pgClient.query(`SELECT url FROM published_urls WHERE added_at > NOW() - INTERVAL '3 hours' ORDER BY added_at DESC`),
-      pgClient.query(`SELECT title FROM published_titles WHERE added_at > NOW() - INTERVAL '3 hours' ORDER BY added_at DESC`),
+      pgClient.query(`SELECT url FROM published_urls WHERE added_at > NOW() - INTERVAL '24 hours' ORDER BY added_at DESC`),
+      pgClient.query(`SELECT title FROM published_titles WHERE added_at > NOW() - INTERVAL '24 hours' ORDER BY added_at DESC`),
     ]);
 
     if (settingsRes.rows.length > 0) {
@@ -4110,7 +4110,7 @@ bot.on('callback_query', async (query) => {
             if (!link || seenSdLinks.has(link) || title.length < 10) continue;
             if (BLOCKED_TITLE_PATTERNS.some(p => p.test(title))) continue;
             seenSdLinks.add(link);
-            const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : 0;
+            const pubDate = (item.pubDate || item.isoDate) ? new Date(item.pubDate || item.isoDate).getTime() : 0;
             if (!pubDate || isNaN(pubDate) || nowSd - pubDate > SIX_H) continue;
             sdItems.push(item);
           }
@@ -4158,60 +4158,70 @@ bot.on('callback_query', async (query) => {
     }
 
     case 'admin_refresh': {
-      await bot.answerCallbackQuery(query.id, { text: '🔄 Tüm kaynaklar taranıyor...' }).catch(() => {});
-      const refreshMsg = await bot.sendMessage(chatId, '🔄 Tüm haber kaynakları yenileniyor, lütfen bekle...').catch(() => null);
+      await bot.answerCallbackQuery(query.id, { text: '🔄 Kaynaklar taranıyor...' }).catch(() => {});
+      const refreshMsg = await bot.sendMessage(chatId, '🔄 Haber kaynakları taranıyor...').catch(() => null);
       try {
-        const activePool = RSS_FEEDS.filter(f => {
-          if (!matchesActiveCategory(f.title || f.label || "", "", settings.activeCategory)) return true;
-          return f.category === 'hepsi' || f.category === settings.activeCategory || settings.activeCategory === 'hepsi';
-        });
-        const limit = Math.min(activePool.length, 20);
-        const feedSlice = activePool.slice(0, limit);
+        // Aktif kategoriye uyan feedleri al
+        const activePool = RSS_FEEDS.filter(f =>
+          f.type !== 'youtube' && (
+            settings.activeCategory === 'hepsi' ||
+            f.category === settings.activeCategory ||
+            f.category === 'genel'
+          )
+        );
+        const feedSlice = activePool.slice(0, 15);
+        const TWO_H = 2 * 60 * 60 * 1000;
+        const now = Date.now();
 
         const results = await Promise.allSettled(
           feedSlice.map(f => fetchFeed(f).catch(() => []))
         );
 
-        let totalNew = 0;
-        let totalItems = 0;
+        let totalRecent = 0;    // Son 2 saatteki toplam haber
+        let totalUnpublished = 0; // Bunların kaçı henüz yayınlanmamış
         const sourcesSummary = [];
 
         results.forEach((r, i) => {
           const feed = feedSlice[i];
           const items = r.status === 'fulfilled' ? r.value : [];
-          totalItems += items.length;
-          const newItems = items.filter(it => {
+          const recentItems = items.filter(it => {
+            const ts = (it.pubDate || it.isoDate) ? new Date(it.pubDate || it.isoDate).getTime() : 0;
+            return ts && !isNaN(ts) && now - ts < TWO_H;
+          });
+          const unpublished = recentItems.filter(it => {
             const url = it.link || it.guid;
             return url && !publishedUrls.has(url);
           });
-          totalNew += newItems.length;
-          if (newItems.length > 0) sourcesSummary.push(`• ${feed.label}: ${newItems.length} yeni`);
+          totalRecent += recentItems.length;
+          totalUnpublished += unpublished.length;
+          if (recentItems.length > 0) sourcesSummary.push(`• ${feed.label}: ${recentItems.length} haber (${unpublished.length} yeni)`);
         });
 
-        const summaryLines = sourcesSummary.slice(0, 10).join('\n');
-        const moreCount = sourcesSummary.length > 10 ? `\n… ve ${sourcesSummary.length - 10} kaynak daha` : '';
+        const summaryLines = sourcesSummary.slice(0, 8).join('\n');
+        const moreCount = sourcesSummary.length > 8 ? `\n… ve ${sourcesSummary.length - 8} kaynak daha` : '';
 
         let refreshText =
-          `🔄 *Haber Güncelleme Tamamlandı*\n\n` +
-          `📡 Taranan kaynak: *${limit}/${activePool.length}*\n` +
-          `📰 Toplam haber: *${totalItems}*\n` +
-          `✨ Yeni haber: *${totalNew}*\n\n`;
+          `🔄 *Haber Tarama Tamamlandı*\n\n` +
+          `📡 Taranan kaynak: *${feedSlice.length}*\n` +
+          `🕐 Son 2 saatteki haber: *${totalRecent}*\n` +
+          `✨ Henüz yayınlanmamış: *${totalUnpublished}*\n` +
+          `🗂 Toplam kayıtlı URL: *${publishedUrls.size}*\n\n`;
 
         if (summaryLines) refreshText += `*Kaynaklar:*\n${summaryLines}${moreCount}\n\n`;
 
-        if (totalNew > 0) {
-          refreshText += `_${totalNew} yeni haber mevcut — "Şimdi Yayınla" ile yayınlayabilirsin._`;
+        if (totalUnpublished > 0) {
+          refreshText += `_${totalUnpublished} yeni haber var — "Şimdi Yayınla" ile ilk haberi yayınla._`;
+        } else if (totalRecent > 0) {
+          refreshText += `_Son 2 saatteki tüm haberler zaten yayınlandı. Otomatik zamanlayıcı devam ediyor._`;
         } else {
-          refreshText += `_Tüm haberler zaten işlendi, yeni içerik yok._`;
+          refreshText += `_Son 2 saatte hiç haber bulunamadı. Feed kaynakları kontrol edilmeli._`;
         }
 
         const refreshKeyboard = {
           inline_keyboard: [
-            totalNew > 0
-              ? [{ text: '▶️ Şimdi Yayınla', callback_data: 'admin_publish_now' }]
-              : [],
+            [{ text: '▶️ Şimdi Yayınla', callback_data: 'admin_publish_now' }],
             [{ text: '◀️ Geri', callback_data: 'admin_back' }],
-          ].filter(r => r.length > 0),
+          ],
         };
 
         if (refreshMsg) {
@@ -4366,7 +4376,7 @@ bot.onText(/\/sondakika/, async (msg) => {
         seenLinks.add(link);
 
         // Tarih filtresi: son 6 saat — tarihsiz veya eski haberler kesinlikle atla
-        const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : 0;
+        const pubDate = (item.pubDate || item.isoDate) ? new Date(item.pubDate || item.isoDate).getTime() : 0;
         if (!pubDate || isNaN(pubDate) || now - pubDate > SIX_HOURS) continue;
 
         allItems.push(item);
