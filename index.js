@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.24 — haber tekrar engeli guclendirildi + ayni gorsel dedupe — 2026-05-22');
+console.log('🤖 Bot v2.25 — video orani %33 hedef + YouTube rotasyon duzeltmesi + 8 yeni kanal — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -494,6 +494,55 @@ const RSS_FEEDS = [
     url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCYXe_Lq4D_MAlNUH_VJEGWg',
     label: '▶️ KRT TV YouTube',
     source: 'KRT TV',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCVbQ5vdC_LLvO0d9IYXX9lw',
+    label: '▶️ Medyascope YouTube',
+    source: 'Medyascope',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC0j2KNkVNR_WOeUP_SMSOSA',
+    label: '▶️ Sözcü TV YouTube',
+    source: 'Sözcü TV',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCZiY_uo5cN4q4AKLR-E1_gA',
+    label: '▶️ Artı TV YouTube',
+    source: 'Artı TV',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCXL7TBVn4-WCLkBqGaE49og',
+    label: '▶️ Artı Gerçek YouTube',
+    source: 'Artı Gerçek',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UC0j2KNkVNR_WOeUP_SMSOSA',
+    label: '▶️ T24 YouTube',
+    source: 'T24',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCq0n_6XAGcALWZn7VakSjhg',
+    label: '▶️ Fox TV YouTube',
+    source: 'Fox TV',
+    type: 'youtube',
+    category: 'video',
+  },
+  {
+    url: 'https://www.youtube.com/feeds/videos.xml?channel_id=UCzZdZZLDJKxRvwXMvE1J8vg',
+    label: '▶️ Cumhuriyet YouTube',
+    source: 'Cumhuriyet',
     type: 'youtube',
     category: 'video',
   },
@@ -899,11 +948,11 @@ function getNeededMediaType() {
   if (total === 0) return 'image';
   const imageRatio = mediaStats.image / total;
   const videoRatio = mediaStats.video / total;
-  // Videonun oranı düşükse YouTube/web video ara
-  if (videoRatio < 0.15) return 'video';
-  // Görsel oranı her zaman yüksek tutulsun
-  if (imageRatio < 0.80) return 'image';
-  return 'image'; // Varsayılan: görsel
+  // Her 3 haberden 1'i video olsun (%33 hedef)
+  if (videoRatio < 0.33) return 'video';
+  // Görsel oranını da dengede tut
+  if (imageRatio < 0.60) return 'image';
+  return 'video'; // Varsayılan: video ara
 }
 
 // ─── Medya Çıkarma ────────────────────────────────────────────────────────────
@@ -2559,22 +2608,33 @@ function getActiveFeed() {
     if (pool.length === 0) pool = RSS_FEEDS;
   }
 
-  // Video oranı düşükse SADECE mevcut pool içindeki feedlerden video dene
-  // KATEGORİ DEĞİŞTİRME — seçili kategoride (örn. spor) kal, video kategorisine geçme
   const needed = getNeededMediaType();
+
+  // Video gerektiğinde: YouTube feed'lerini önce dene
   if (needed === 'video') {
-    const nonYtFeeds = pool.filter((f) => f.type !== 'youtube');
-    if (nonYtFeeds.length > 0) {
-      const idx = currentFeedIndex % nonYtFeeds.length;
+    // Önce bu pool'daki YouTube'ları ara, yoksa global YouTube listesinden al
+    const ytInPool = pool.filter((f) => f.type === 'youtube');
+    const ytFeeds = ytInPool.length > 0
+      ? ytInPool
+      : RSS_FEEDS.filter((f) => f.type === 'youtube');
+    if (ytFeeds.length > 0) {
+      const idx = currentFeedIndex % ytFeeds.length;
       currentFeedIndex++;
-      return nonYtFeeds[idx];
+      return ytFeeds[idx];
     }
   }
 
-  // Normal rotasyon (youtube dahil ama sona koy)
+  // Normal rotasyon: YouTube'u her 3'te 1 sıraya koy (artık sona değil)
   const nonYt = pool.filter((f) => f.type !== 'youtube');
   const yt = pool.filter((f) => f.type === 'youtube');
-  const orderedPool = [...nonYt, ...yt];
+  // Her 3 feed'den biri YouTube olsun
+  const orderedPool = [];
+  let ytIdx = 0, nIdx = 0;
+  while (nIdx < nonYt.length || ytIdx < yt.length) {
+    if (nIdx < nonYt.length) orderedPool.push(nonYt[nIdx++]);
+    if (nIdx < nonYt.length) orderedPool.push(nonYt[nIdx++]);
+    if (ytIdx < yt.length)  orderedPool.push(yt[ytIdx++]);
+  }
   const idx = currentFeedIndex % orderedPool.length;
   currentFeedIndex++;
   return orderedPool[idx];
