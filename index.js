@@ -3819,30 +3819,29 @@ bot.on('callback_query', async (query) => {
         ]) || rawLink;
       }
 
-      const rawDesc = item.contentSnippet || item.summary || item.description || '';
-      const categoryTag = detectCategory(title, rawDesc);
+      // HTML etiketleri ve linkleri temizlenmiş RSS açıklaması
+      const rawDescRaw = item.contentSnippet || item.summary || item.description || '';
+      const cleanDesc = rawDescRaw
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/https?:\/\/\S+/g, '')
+        .replace(/&[a-z#0-9]+;/gi, ' ')
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+
+      const categoryTag = detectCategory(title, cleanDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
 
-      // 1) OG meta çek (7s timeout) — articleBody AI için gerekli
-      const ogMeta = await Promise.race([
-        fetchOgMeta(link).catch(() => ({})),
-        new Promise(r => setTimeout(() => r({}), 7000)),
-      ]);
+      // AI özeti — kendi içinde 8s timeout var; AI yoksa cleanDesc döner
+      const aiSummary = await summarizeNews(title, cleanDesc).catch(() => null);
 
-      // 2) AI özet — articleBody varsa daha zengin, summarizeNews içinde kendi 8s timeout var
-      const descForAI = ogMeta.description || rawDesc || '';
-      const aiSummary = await summarizeNews(title, descForAI, ogMeta.articleBody || null).catch(() => null);
-
-      // 3) En iyi içeriği seç: AI özeti > OG açıklaması > RSS açıklaması
+      // En iyi içerik: AI özeti > temizlenmiş RSS açıklaması
       const bestDesc = (aiSummary && aiSummary.length > 5)
         ? cleanArrows(stripLinks(aiSummary))
-        : (ogMeta.description && ogMeta.description.length > 10)
-          ? stripLinks(ogMeta.description).slice(0, 600)
-          : (rawDesc && rawDesc.length > 10)
-            ? stripLinks(rawDesc).slice(0, 600)
-            : null;
+        : (cleanDesc && cleanDesc.length > 10)
+          ? cleanDesc.slice(0, 600)
+          : null;
 
-      // Link yok — içerik direkt metin olarak, web önizlemesi kapalı
+      // Kesinlikle link yok, web önizlemesi kapalı
       let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
       if (bestDesc) text += `\n\n${bestDesc}`;
       text = text.slice(0, 4096);
