@@ -4787,10 +4787,22 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
+// 409 önlemi: başlarken Telegram polling oturumunu sıfırla
+bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+
 publishNextNews();
 resetInterval();
 startBreakingNewsChecker();
 checkBreakingNews(); // İlk kontrol hemen yap
+
+// ── Railway health check — HTTP sunucu olmadan Railway servisi kırmızı gösterir ──
+const HEALTH_PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/plain' });
+  res.end('OK');
+}).listen(HEALTH_PORT, () => {
+  console.log(`✅ Health check dinliyor: port ${HEALTH_PORT}`);
+});
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
