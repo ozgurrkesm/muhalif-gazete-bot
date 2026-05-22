@@ -3776,14 +3776,17 @@ bot.on('callback_query', async (query) => {
 
   // ─── /sondakika Haber Kanalına Yayınla ──────────────────────────────────────
   if (data.startsWith('sd_publish_')) {
+    console.log(`📥 sd_publish_ callback alındı — chatId:${chatId} data:${data}`);
     if (!isAdmin(chatId)) {
       await bot.answerCallbackQuery(query.id, { text: '⛔ Sadece adminler yayınlayabilir.' });
       return;
     }
     const pendingItems = pendingSdResults.get(chatId);
     const idx = parseInt(data.replace('sd_publish_', ''));
+    console.log(`📋 pendingItems: ${pendingItems ? pendingItems.length + ' haber' : 'YOK'}, idx:${idx}`);
     if (!pendingItems || !pendingItems[idx]) {
-      await bot.answerCallbackQuery(query.id, { text: '❌ Haber bulunamadı, /sondakika tekrar dene.' });
+      await bot.answerCallbackQuery(query.id, { text: '❌ Bot yeniden başlatıldı. /sondakika tekrar yaz.' });
+      bot.sendMessage(chatId, '⚠️ Bot yeniden başlatıldığı için haberler sıfırlandı.\n/sondakika yazarak tekrar listele.').catch(() => {});
       return;
     }
     const item = pendingItems[idx];
@@ -3806,11 +3809,23 @@ bot.on('callback_query', async (query) => {
       caption = caption.slice(0, 4096);
 
       let sentMsg = null;
+      let sendError = null;
       try {
         sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-      } catch {
-        const plainCaption = caption.replace(/[*_`\[\]]/g, '').trim();
-        sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false }).catch(() => null);
+      } catch (e1) {
+        sendError = e1.message;
+        try {
+          const plainCaption = caption.replace(/[*_`\[\]]/g, '').trim();
+          sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false });
+          sendError = null;
+        } catch (e2) {
+          sendError = e2.message;
+        }
+      }
+      if (!sentMsg) {
+        console.error(`❌ Kanala gönderilemedi: ${sendError}`);
+        bot.sendMessage(chatId, `❌ Kanala gönderilemedi:\n${sendError}`).catch(() => {});
+        return;
       }
 
       publishedUrls.add(rawLink);
@@ -4741,6 +4756,7 @@ initDatabase().then(() => {
 const HEALTH_PORT = process.env.PORT || 3000;
 const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
 const WEBHOOK_URL_ACTIVE = RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/tg-webhook` : '';
+console.log(`🔧 Mod: ${WEBHOOK_URL_ACTIVE ? 'WEBHOOK → ' + WEBHOOK_URL_ACTIVE : 'POLLING (RAILWAY_PUBLIC_DOMAIN yok)'}`);
 
 function startBot() {
   publishNextNews();
