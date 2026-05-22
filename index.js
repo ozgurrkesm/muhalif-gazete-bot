@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.26 — YouTube kaldirildi web gomulu video aktif — 2026-05-22');
+console.log('🤖 Bot v2.27 — sd_publish gorsel+video akisi otomatik yayinla ayni — 2026-05-22');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -1816,6 +1816,13 @@ function isLiveBroadcastImage(url) {
 }
 
 // Başlık bazlı canlı yayın tespiti — URL filtresi yakalamasa bile
+function isGenericOrLive(url) {
+  if (!url) return true;
+  if (isLiveBroadcastImage(url)) return true;
+  const u = url.toLowerCase();
+  return /logo|default|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|icon[-_]|[-_]icon\.|opengraph[-_]default/i.test(u);
+}
+
 function isLiveBroadcastTitle(title) {
   if (!title) return false;
   return /\bcanl[iı]\s*(yayin|yayını?|anlatim|bağlantı|yayın)|\blive\s*stream|\bcanl[iı]\b.*\byayin/i.test(title);
@@ -3779,24 +3786,84 @@ bot.on('callback_query', async (query) => {
     }
     const item = pendingItems[idx];
     const title = stripNewsSource(cleanTitle(item.title || ''));
-    const link = item.link || item.guid || '';
-    await bot.answerCallbackQuery(query.id, { text: '📤 Kanala gönderiliyor...' });
+    const rawLink = item.link || item.guid || '';
+    await bot.answerCallbackQuery(query.id, { text: '🖼 Görsel aranıyor...' });
     try {
-      const aiSummary = await summarizeNews(title, item.contentSnippet || item.summary || '').catch(() => null);
-      const categoryTag = detectCategory(title, item.contentSnippet || '');
+      // Google News URL'sini çöz
+      let link = rawLink;
+      if (rawLink.includes('news.google.com')) {
+        link = (await resolveGoogleNewsUrl(rawLink).catch(() => null)) || rawLink;
+      }
+
+      // OG meta + RSS media paralel çek
+      const rawDesc = item.contentSnippet || item.summary || item.description || '';
+      const [ogMeta, rssMediaRaw] = await Promise.all([
+        fetchOgMeta(link).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
+        Promise.resolve(extractMedia(item)),
+      ]);
+
+      // AI özet + caption
+      const bestDesc = ogMeta.description || rawDesc;
+      const aiSummary = await summarizeNews(title, bestDesc, ogMeta.articleBody || null).catch(() => null);
+      const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
-      let caption = `🚨 *SON DAKİKA*\n\n${catE}*${title}*`;
+      let caption = `🚨 *SON DAKİKA*\n\n${catE}*${stripLinks(title)}*`;
       if (aiSummary && aiSummary.length > 10) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
       caption = caption.slice(0, 1024);
-      const sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-      publishedUrls.add(link);
-      breakingPublishedUrls.add(link);
+
+      // Görsel seç — otomatik yayınla aynı mantık
+      if (rssMediaRaw.url) rssMediaRaw.url = upgradeImageUrl(rssMediaRaw.url);
+      if (isLiveBroadcastTitle(title)) { rssMediaRaw.type = null; rssMediaRaw.url = null; }
+
+      let imgUrl = null;
+      if (ogMeta.image && !isGenericOrLive(ogMeta.image)) {
+        imgUrl = upgradeImageUrl(ogMeta.image);
+      } else if (rssMediaRaw.type === 'image' && rssMediaRaw.url && !isGenericOrLive(rssMediaRaw.url)) {
+        imgUrl = rssMediaRaw.url;
+      }
+
+      // Gömülü web videosu var mı?
+      const webVid = imgUrl ? null : await fetchArticleHtmlAndExtractVideo(link).catch(() => null);
+
+      let sentMsg = null;
+      if (webVid) {
+        const ok = await sendWebVideo(CHANNEL_ID, webVid, caption);
+        if (ok) sentMsg = { message_id: null };
+      }
+      if (!sentMsg && imgUrl) {
+        try {
+          sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption, parse_mode: 'Markdown' });
+        } catch {
+          // URL ile olmadı, buffer dene
+          const buf = await downloadImageBuffer(imgUrl).catch(() => null);
+          if (buf) {
+            try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption, parse_mode: 'Markdown' }); } catch {}
+          }
+        }
+      }
+      if (!sentMsg) {
+        // Görsel/video yok → DDG dene
+        const ddg = await fetchDuckDuckGoImage(title).catch(() => null);
+        if (ddg) {
+          try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption, parse_mode: 'Markdown' }); } catch {}
+        }
+      }
+      if (!sentMsg) {
+        // Son çare: sadece metin
+        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
+      }
+
+      publishedUrls.add(rawLink);
+      if (link !== rawLink) publishedUrls.add(link);
+      breakingPublishedUrls.add(rawLink);
       persistPublishedUrls();
-      registerSentMessage(sentMsg.message_id, title);
+      if (sentMsg?.message_id) registerSentMessage(sentMsg.message_id, title);
+
       await bot.editMessageText(`✅ Kanala yayınlandı!\n\n📰 ${title}`, {
         chat_id: chatId, message_id: msgId
       }).catch(() => {});
     } catch (e) {
+      console.error('❌ sd_publish_ hata:', e.message);
       await bot.answerCallbackQuery(query.id, { text: `❌ Hata: ${e.message.slice(0, 60)}` });
     }
     return;
