@@ -147,13 +147,12 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-// Her ortamda polling kullan (Railway dahil) — webhook karmaşasını önler
+// Her ortamda polling kullan — önce webhook sil, sonra polling başlat
 const WEBHOOK_PATH = '/tg-webhook';
 const WEBHOOK_URL  = '';
 
-const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 300, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
-});
+// polling: false ile başlat — webhook silindikten SONRA polling açılacak
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
 
@@ -4735,14 +4734,6 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-// Eski webhook varsa temizle
-bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
-
-publishNextNews();
-resetInterval();
-startBreakingNewsChecker();
-checkBreakingNews(); // İlk kontrol hemen yap
-
 // ── HTTP sunucu: Railway health check ────────────────────────────────────────
 const HEALTH_PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
@@ -4750,8 +4741,25 @@ http.createServer((req, res) => {
   res.end('OK');
 }).listen(HEALTH_PORT, () => {
   console.log(`✅ HTTP health check: port ${HEALTH_PORT}`);
-  console.log('📡 Polling modu aktif');
 });
+
+// Önce webhook sil, sonra polling başlat (409 önlemi)
+bot.deleteWebhook({ drop_pending_updates: true })
+  .then(() => {
+    console.log('🗑 Webhook temizlendi, polling başlatılıyor...');
+    return bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
+  })
+  .then(() => {
+    console.log('📡 Polling modu aktif');
+    publishNextNews();
+    resetInterval();
+    startBreakingNewsChecker();
+    checkBreakingNews();
+  })
+  .catch(e => {
+    console.error('❌ Polling başlatılamadı:', e.message);
+    process.exit(1);
+  });
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
