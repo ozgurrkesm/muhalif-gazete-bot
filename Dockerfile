@@ -1,20 +1,19 @@
 FROM node:20-slim
 
-  RUN apt-get update && apt-get install -y \
-      python3 \
-      python3-pip \
-      curl \
-      ffmpeg \
-      && pip3 install yt-dlp --break-system-packages --upgrade \
-      && apt-get clean \
-      && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    ffmpeg \
+    && pip3 install yt-dlp --break-system-packages --upgrade \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-  WORKDIR /app
+WORKDIR /app
 
-  COPY package.json ./
-  RUN npm install
+COPY package.json ./
+RUN npm install
 
-  COPY . .
+COPY . .
 
-  CMD ["node", "index.js"]
-  
+CMD ["node", "index.js"]
