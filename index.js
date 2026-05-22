@@ -4699,23 +4699,15 @@ bot.on('polling_error', (err) => {
 // ─── Temiz Kapanış ────────────────────────────────────────────────────────────
 
 process.on('SIGTERM', () => {
-  // process.exit() ÇAĞIRILMAZ — Railway "always" politikası yeniden başlatmasın.
-  // Polling durdurulur, Railway'in SIGKILL'i beklenir.
-  console.log('🛑 SIGTERM alındı — polling durduruluyor, SIGKILL bekleniyor...');
+  console.log('🛑 SIGTERM alındı — polling durduruluyor...');
   persistPublishedUrls();
-  if (WEBHOOK_URL) {
-    bot.deleteWebhook().catch(() => {});
-  } else {
-    bot.stopPolling().catch(() => {});
-  }
-  // Process burada ÖLMEZ — Railway deploy tamamlanınca SIGKILL gönderir
+  bot.stopPolling().catch(() => {});
 });
 
 process.on('SIGINT', () => {
   console.log('🛑 SIGINT alındı, çıkılıyor...');
   persistPublishedUrls();
-  const stop = WEBHOOK_URL ? bot.deleteWebhook() : bot.stopPolling();
-  stop.catch(() => {}).finally(() => process.exit(0));
+  bot.stopPolling().catch(() => {}).finally(() => process.exit(0));
 });
 
 // ─── Başlat ───────────────────────────────────────────────────────────────────
