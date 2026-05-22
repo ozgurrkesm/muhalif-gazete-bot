@@ -3791,7 +3791,7 @@ bot.on('callback_query', async (query) => {
     const item = pendingItems[idx];
     const title = stripNewsSource(cleanTitle(item.title || ''));
     const rawLink = item.link || item.guid || '';
-    await bot.answerCallbackQuery(query.id, { text: '🖼 Görsel aranıyor...' });
+    await bot.answerCallbackQuery(query.id, { text: '📤 Yayınlanıyor...' });
     try {
       // Google News URL'sini çöz
       let link = rawLink;
@@ -3799,81 +3799,20 @@ bot.on('callback_query', async (query) => {
         link = (await resolveGoogleNewsUrl(rawLink).catch(() => null)) || rawLink;
       }
 
-      // OG meta + RSS media paralel çek
       const rawDesc = item.contentSnippet || item.summary || item.description || '';
-      const [ogMeta, rssMediaRaw] = await Promise.all([
-        fetchOgMeta(link).catch(() => ({ image: null, image2: null, description: null, articleBody: null })),
-        Promise.resolve(extractMedia(item)),
-      ]);
-
-      // AI özet + caption
-      const bestDesc = ogMeta.description || rawDesc;
-      const aiSummary = await summarizeNews(title, bestDesc, ogMeta.articleBody || null).catch(() => null);
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
       let caption = `🚨 *SON DAKİKA*\n\n${catE}*${stripLinks(title)}*`;
-      if (aiSummary && aiSummary.length > 10) caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
-      caption = caption.slice(0, 1024);
-
-      // Görsel seç — otomatik yayınla aynı mantık
-      if (rssMediaRaw.url) rssMediaRaw.url = upgradeImageUrl(rssMediaRaw.url);
-      if (isLiveBroadcastTitle(title)) { rssMediaRaw.type = null; rssMediaRaw.url = null; }
-
-      // Görsel seç — otomatik yayınla (publishNowInstant) ile birebir aynı mantık
-      let imgUrl = null;
-      if (ogMeta.image) {
-        const imgLower = ogMeta.image.toLowerCase();
-        const isGenericSiteImage = /logo|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|opengraph[-_]default/i.test(imgLower);
-        if (!isGenericSiteImage && !isLiveBroadcastImage(ogMeta.image)) {
-          imgUrl = upgradeImageUrl(ogMeta.image);
-        }
-      }
-      if (!imgUrl && rssMediaRaw.type === 'image' && rssMediaRaw.url) {
-        const rssLower = rssMediaRaw.url.toLowerCase();
-        const isGenericRss = /logo|og[-_]default|share[-_]img|twitter[-_]card|social[-_]share|placeholder|noimage|no[-_]image|banner[-_]default|favicon|opengraph[-_]default/i.test(rssLower);
-        if (!isGenericRss && !isLiveBroadcastImage(rssMediaRaw.url)) {
-          imgUrl = rssMediaRaw.url;
-        }
-      }
-
-      // Gömülü web videosu var mı?
-      const webVid = imgUrl ? null : await fetchArticleHtmlAndExtractVideo(link).catch(() => null);
+      if (rawDesc && rawDesc.length > 10) caption += `\n\n${stripLinks(rawDesc).slice(0, 300)}`;
+      caption += `\n\n🔗 ${link}`;
+      caption = caption.slice(0, 4096);
 
       let sentMsg = null;
-      if (webVid) {
-        const ok = await sendWebVideo(CHANNEL_ID, webVid, caption);
-        if (ok) sentMsg = { message_id: null };
-      }
-      if (!sentMsg && imgUrl) {
-        // Markdown ile dene, olmadı plain caption ile dene
-        const plainCap = caption.replace(/[*_`\[\]]/g, '').trim();
-        try { sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption, parse_mode: 'Markdown' }); }
-        catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption: plainCap }); } catch {} }
-        if (!sentMsg) {
-          const buf = await downloadImageBuffer(imgUrl).catch(() => null);
-          if (buf) {
-            try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption, parse_mode: 'Markdown' }); }
-            catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, buf, { caption: plainCap }); } catch {} }
-          }
-        }
-      }
-      if (!sentMsg) {
-        const plainCap = caption.replace(/[*_`\[\]]/g, '').trim();
-        const ddg = await fetchDuckDuckGoImage(title).catch(() => null);
-        if (ddg) {
-          try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption, parse_mode: 'Markdown' }); }
-          catch { try { sentMsg = await bot.sendPhoto(CHANNEL_ID, ddg, { caption: plainCap }); } catch {} }
-        }
-      }
-      if (!sentMsg) {
-        // Son çare: metin — Markdown ile dene, olmadı plain text
+      try {
+        sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
+      } catch {
         const plainCaption = caption.replace(/[*_`\[\]]/g, '').trim();
-        try {
-          sentMsg = await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-        } catch {}
-        if (!sentMsg) {
-          sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false }).catch(() => null);
-        }
+        sentMsg = await bot.sendMessage(CHANNEL_ID, plainCaption, { disable_web_page_preview: false }).catch(() => null);
       }
 
       publishedUrls.add(rawLink);
