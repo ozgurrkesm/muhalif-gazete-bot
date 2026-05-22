@@ -3400,13 +3400,15 @@ async function checkBreakingNews() {
   for (const feed of allBreakingFeeds) {
     try {
       const items = await fetchFeed(feed);
+      const TWO_H_MS = 2 * 60 * 60 * 1000;
       const newItems = items.filter(item => {
         const u = item.link || item.guid;
         if (!u) return false;
+        // Son 2 saat filtresi — tarihsiz veya 2 saatten eski haberler kesinlikle atla
+        const itemTs = item.pubDate ? new Date(item.pubDate).getTime() : 0;
+        if (!itemTs || isNaN(itemTs) || Date.now() - itemTs > TWO_H_MS) return false;
         // breakingPublishedUrls: in-memory, restart'ta sıfırlanır → eski kayıtlar engellemez
         if (breakingPublishedUrls.has(u)) return false;
-        // publishedUrls'te varsa ama son dakika feed'inden geliyorsa yine de geç
-        // (normal feedlerden gelenler için publishedUrls de kontrol et)
         const isBreakingFeed = BREAKING_NEWS_FEEDS.some(bf => bf.url === feed.url);
         if (!isBreakingFeed && publishedUrls.has(u)) return false;
         if (!isValidNewsItem(item, feed)) return false;
@@ -4109,7 +4111,7 @@ bot.on('callback_query', async (query) => {
             if (BLOCKED_TITLE_PATTERNS.some(p => p.test(title))) continue;
             seenSdLinks.add(link);
             const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : 0;
-            if (pubDate && nowSd - pubDate > SIX_H) continue;
+            if (!pubDate || isNaN(pubDate) || nowSd - pubDate > SIX_H) continue;
             sdItems.push(item);
           }
         }
@@ -4363,9 +4365,9 @@ bot.onText(/\/sondakika/, async (msg) => {
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(title))) continue;
         seenLinks.add(link);
 
-        // Tarih filtresi: son 6 saat
+        // Tarih filtresi: son 6 saat — tarihsiz veya eski haberler kesinlikle atla
         const pubDate = item.pubDate ? new Date(item.pubDate).getTime() : 0;
-        if (pubDate && now - pubDate > SIX_HOURS) continue;
+        if (!pubDate || isNaN(pubDate) || now - pubDate > SIX_HOURS) continue;
 
         allItems.push(item);
       }
