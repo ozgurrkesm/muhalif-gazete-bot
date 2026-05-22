@@ -4737,31 +4737,56 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-// ── HTTP sunucu: Railway health check ────────────────────────────────────────
+// ── Başlatma: Railway'de webhook, yoksa polling ───────────────────────────────
 const HEALTH_PORT = process.env.PORT || 3000;
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('OK');
-}).listen(HEALTH_PORT, () => {
-  console.log(`✅ HTTP health check: port ${HEALTH_PORT}`);
-});
+const RAILWAY_DOMAIN = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || '';
+const WEBHOOK_URL_ACTIVE = RAILWAY_DOMAIN ? `https://${RAILWAY_DOMAIN}/tg-webhook` : '';
 
-// Webhook'u _request ile sil (deleteWebhook v0.66'da yok), sonra polling başlat
-bot._request('deleteWebhook', { form: { drop_pending_updates: true } })
-  .then(() => {
-    console.log('🗑 Webhook temizlendi, polling başlatılıyor...');
-    bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
-    console.log('📡 Polling başlatıldı');
-    publishNextNews();
-    resetInterval();
-    startBreakingNewsChecker();
-    checkBreakingNews();
-    console.log('✅ Bot tamamen hazır');
-  })
-  .catch(e => {
-    console.error('❌ Bot başlatma hatası:', e.message);
-    process.exit(1);
-  });
+function startBot() {
+  publishNextNews();
+  resetInterval();
+  startBreakingNewsChecker();
+  checkBreakingNews();
+  console.log('✅ Bot tamamen hazır');
+}
+
+http.createServer((req, res) => {
+  if (WEBHOOK_URL_ACTIVE && req.method === 'POST' && req.url === '/tg-webhook') {
+    let body = '';
+    req.on('data', chunk => { body += chunk; });
+    req.on('end', () => {
+      try { bot.processUpdate(JSON.parse(body)); } catch {}
+      res.writeHead(200); res.end('OK');
+    });
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('OK');
+  }
+}).listen(HEALTH_PORT, () => {
+  console.log(`✅ HTTP sunucu: port ${HEALTH_PORT}`);
+
+  if (WEBHOOK_URL_ACTIVE) {
+    // Railway: webhook modu — polling çakışması olmaz
+    bot._request('setWebhook', { form: {
+      url: WEBHOOK_URL_ACTIVE,
+      drop_pending_updates: true,
+      allowed_updates: JSON.stringify(['message','callback_query','channel_post','inline_query']),
+    }})
+    .then(() => {
+      console.log(`🔗 Webhook aktif: ${WEBHOOK_URL_ACTIVE}`);
+      startBot();
+    })
+    .catch(e => { console.error('❌ Webhook kurulamadı:', e.message); process.exit(1); });
+  } else {
+    // Lokal: polling modu
+    bot._request('deleteWebhook', { form: { drop_pending_updates: true } })
+      .then(() => {
+        bot.startPolling({ interval: 300, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } });
+        console.log('📡 Polling modu aktif');
+        startBot();
+      })
+      .catch(e => { console.error('❌ Polling başlatılamadı:', e.message); process.exit(1); });
+  }
+});
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
