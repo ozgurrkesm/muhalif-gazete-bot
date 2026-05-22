@@ -1496,27 +1496,14 @@ async function fetchSerperImage(query) {
   });
 }
 
-// ─── Ana resim arama: Serper → LoremFlickr → Wikipedia ──────────────────────
-// NOT: Wikipedia URL'leri Telegram sunucularında 429 alıyor — LoremFlickr önce gelir
+// ─── Ana resim arama: Serper (opsiyonel) — stok foto fallback YOK ─────────────
+// Stok foto servisleri (LoremFlickr, Wikipedia) habere özgü görsel vermediğinden kaldırıldı.
+// Yalnızca RSS enclosure / og:image kullanılır; görsel yoksa haber atlanır.
 async function fetchDuckDuckGoImage(query) {
-  // 1. Serper.dev (Google Images) — SERPER_API_KEY varsa önce bunu dene
+  // Serper.dev (Google Images) — SERPER_API_KEY varsa kullan
   const serperImg = await fetchSerperImage(query).catch(() => null);
-  if (serperImg) return serperImg;
-
-  // 2. LoremFlickr — Telegram ile %100 uyumlu (staticflickr CDN), ücretsiz, hızlı
-  //    Wikipedia'dan ÖNCE çünkü Wikipedia CDN Telegram botlarını 429 ile reddediyor
-  const flickrImg = await fetchLoremFlickrImage(query).catch(() => null);
-  if (flickrImg) { console.log(`🖼 LoremFlickr: ${flickrImg.slice(0, 80)}`); return flickrImg; }
-
-  // 3. Wikipedia REST API — fallback (Telegram 429 alırsa buffer indirme denenir)
-  const keywords = extractKeywords(query);
-  if (keywords.length) {
-    const results = await Promise.all(keywords.map(k => wikiImage(k).catch(() => null)));
-    const wikiImg = results.find(r => r !== null) || null;
-    if (wikiImg) { console.log(`🖼 Wikipedia: ${wikiImg.slice(0, 80)}`); return wikiImg; }
-  }
-
-  console.log(`⚠️ Hiçbir kaynaktan resim bulunamadı: "${query.slice(0, 60)}"`);
+  if (serperImg) { console.log(`🖼 Serper: ${serperImg.slice(0, 80)}`); return serperImg; }
+  console.log(`⚠️ Serper görsel bulunamadı: "${query.slice(0, 60)}"`);
   return null;
 }
 
@@ -2616,7 +2603,10 @@ function buildItemMeta(item, feed) {
 
 
 async function publishNowInstant() {
-  if (publishingInProgress) console.log('ℹ️ publishNowInstant: önceki döngü aktif, paralel çalışıyor.');
+  if (publishingInProgress) {
+    console.log('⏭ publishNowInstant: önceki döngü aktif, atlanıyor.');
+    return '⏳ Şu an başka bir haber yayınlanıyor, lütfen bekleyin.';
+  }
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
@@ -4772,11 +4762,6 @@ publishNextNews();
 resetInterval();
 startBreakingNewsChecker();
 checkBreakingNews(); // İlk kontrol hemen yap
-
-// Başlangıçta bir YouTube videosu kanala gönder
-setTimeout(() => {
-  publishNowInstant().then(r => console.log('🎬 Başlangıç video:', r || 'tamamlandı')).catch(e => console.error('🎬 Başlangıç video hata:', e.message));
-}, 10000);
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
