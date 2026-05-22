@@ -3810,49 +3810,29 @@ bot.on('callback_query', async (query) => {
     const rawLink = item.link || item.guid || '';
     await bot.answerCallbackQuery(query.id, { text: '📤 Yayınlanıyor...' });
     try {
-      // Google News URL'sini çöz
+      // Google News URL çözümü — kısa timeout ile
       let link = rawLink;
       if (rawLink.includes('news.google.com')) {
-        link = (await resolveGoogleNewsUrl(rawLink).catch(() => null)) || rawLink;
+        link = await Promise.race([
+          resolveGoogleNewsUrl(rawLink).catch(() => null),
+          new Promise(r => setTimeout(() => r(null), 5000)),
+        ]) || rawLink;
       }
 
       const rawDesc = item.contentSnippet || item.summary || item.description || '';
       const categoryTag = detectCategory(title, rawDesc);
       const catE = categoryTag ? `${categoryTag} ` : '';
 
-      // OG görseli ve açıklaması çek
-      const ogMeta = await fetchOgMeta(link).catch(() => ({}));
-      const bestDesc = ogMeta.description || rawDesc || '';
-      const aiSummary = await summarizeNews(title, bestDesc, ogMeta.articleBody || null).catch(() => null);
-
-      let caption = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
-      if (aiSummary && aiSummary.length > 5) {
-        caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
-      } else if (bestDesc && bestDesc.length > 10) {
-        caption += `\n\n${stripLinks(bestDesc).slice(0, 300)}`;
+      // Sadece RSS verisiyle basit metin — dış istek yok, askıya alınmaz
+      let text = `🚨 SON DAKİKA\n\n${catE}${stripLinks(title)}`;
+      if (rawDesc && rawDesc.length > 10) {
+        text += `\n\n${stripLinks(rawDesc).slice(0, 400)}`;
       }
-      caption += `\n\n🔗 ${link}`;
-      caption = caption.slice(0, 1024);
+      text += `\n\n🔗 ${link}`;
+      text = text.slice(0, 4096);
 
-      // OG görseli varsa fotoğraf olarak, yoksa metin olarak gönder
-      const ogImg = ogMeta.image ? upgradeImageUrl(ogMeta.image) : null;
-      let sentMsg2 = null;
-      if (ogImg) {
-        try {
-          sentMsg2 = await bot.sendPhoto(CHANNEL_ID, ogImg, { caption });
-          console.log(`✅ Son dakika kanala gönderildi (foto) — kanal:${CHANNEL_ID} başlık:${title.slice(0,60)}`);
-        } catch (imgErr) {
-          console.log(`⚠️ Görsel gönderilemedi (${imgErr.message?.slice(0,60)}), metin olarak deneniyor...`);
-          // Görsel hata verirse metin olarak dene
-          const textCaption = caption.slice(0, 4096);
-          sentMsg2 = await bot.sendMessage(CHANNEL_ID, textCaption, { disable_web_page_preview: false });
-          console.log(`✅ Son dakika kanala gönderildi (metin) — kanal:${CHANNEL_ID}`);
-        }
-      } else {
-        const textCaption = caption.slice(0, 4096);
-        sentMsg2 = await bot.sendMessage(CHANNEL_ID, textCaption, { disable_web_page_preview: false });
-        console.log(`✅ Son dakika kanala gönderildi (metin) — kanal:${CHANNEL_ID}`);
-      }
+      const sentMsg2 = await bot.sendMessage(CHANNEL_ID, text, { disable_web_page_preview: false });
+      console.log(`✅ Son dakika kanala gönderildi — msg_id:${sentMsg2?.message_id} kanal:${CHANNEL_ID} başlık:${title.slice(0, 60)}`);
 
       publishedUrls.add(rawLink);
       if (link !== rawLink) publishedUrls.add(link);
@@ -3863,8 +3843,8 @@ bot.on('callback_query', async (query) => {
       await bot.sendMessage(chatId, `✅ Kanala yayınlandı!\n\n📰 ${title.slice(0, 200)}`).catch(() => {});
       await bot.editMessageText(`✅ Yayınlandı!`, { chat_id: chatId, message_id: msgId }).catch(() => {});
     } catch (e) {
-      console.error('❌ sd_publish_ hata:', e.message);
-      await bot.sendMessage(chatId, `❌ Yayınlama hatası:\nKanal: ${CHANNEL_ID}\nHata: ${e.message.slice(0, 200)}`).catch(() => {});
+      console.error(`❌ sd_publish_ hata — kanal:${CHANNEL_ID} hata:${e.message}`);
+      bot.sendMessage(chatId, `❌ Yayınlama hatası!\nKanal: ${CHANNEL_ID}\nHata: ${e.message.slice(0, 300)}`).catch(() => {});
     }
     return;
   }
