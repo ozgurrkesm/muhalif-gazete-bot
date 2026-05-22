@@ -3,8 +3,4 @@ builder = "dockerfile"
 
 [deploy]
 startCommand = "node index.js"
-restartPolicyType = "on-failure"
-restartPolicyMaxRetries = 5
-numReplicas = 1
-healthcheckPath = "/"
-healthcheckTimeout = 30
+restartPolicyType = "always"
