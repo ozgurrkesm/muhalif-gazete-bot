@@ -148,7 +148,7 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new TelegramBot(BOT_TOKEN, {
-  polling: { interval: 100, autoStart: true, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
+  polling: { interval: 100, autoStart: false, params: { timeout: 10, limit: 100, allowed_updates: ['message','callback_query','channel_post','inline_query'] } },
 });
 
 // ─── Ayarlar Yönetimi ─────────────────────────────────────────────────────────
@@ -4778,10 +4778,29 @@ initDatabase().then(() => {
   console.error('🗄️ Veritabanı başlatma hatası:', e.message);
 });
 
-publishNextNews();
-resetInterval();
-startBreakingNewsChecker();
-checkBreakingNews(); // İlk kontrol hemen yap
+// ─── Güvenli Başlangıç — eski instance polling'i bitmeden yenisi başlamasın ──
+async function safeStart() {
+  try {
+    console.log('⏳ Telegram bağlantısı temizleniyor (409 önlemi)...');
+    // Önce webhook sil + pending updates temizle
+    await bot.deleteWebhook({ drop_pending_updates: true }).catch(() => {});
+    // Eski instance'ın kapanması için kısa bekle (Railway rolling deploy)
+    await new Promise(r => setTimeout(r, 3000));
+    // Polling başlat
+    await bot.startPolling({ restart: false }).catch(e => {
+      console.error('⚠️ startPolling hatası:', e.message);
+    });
+    console.log('✅ Polling başlatıldı.');
+  } catch (e) {
+    console.error('❌ safeStart hatası:', e.message);
+  }
+  publishNextNews();
+  resetInterval();
+  startBreakingNewsChecker();
+  checkBreakingNews(); // İlk kontrol hemen yap
+}
+
+safeStart();
 
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
