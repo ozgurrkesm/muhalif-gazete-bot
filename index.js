@@ -1081,6 +1081,16 @@ function cleanArrows(text) {
 }
 
 // Caption'dan tüm URL/link'leri temizle (video/metin gönderiminde kullan)
+function stripSourceDate(text) {
+  if (!text) return text;
+  return text
+    .replace(/kaynak\s*:\s*[^\n,]{2,40}(?:,\s*\d{1,2}\s+\w+\s+\d{4})?\s*\.?/gi, '')
+    .replace(/\b\d{1,2}\s+(Ocak|\u015eubat|Mart|Nisan|May\u0131s|Haziran|Temmuz|A\u011fustos|Eyl\u00fcl|Ekim|Kas\u0131m|Aral\u0131k)\s+\d{4}\b[,.]?\s*/gi, '')
+    .replace(/\(\s*\d{1,2}\s+\w+\s+\d{4}[^)]*\)/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 function stripLinks(text) {
   if (!text) return text;
   return text
@@ -2731,7 +2741,7 @@ async function publishNowInstant() {
           fetchDuckDuckGoImage(title).catch(() => null),
         ]);
         // Caption oluştur
-        { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
+        { const bestD = ogMeta.description || rawDesc || description; const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null).catch(() => null); caption = stripLinks(`${prefix}${catEmoji}${title}`); if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(stripSourceDate(aiS)))}`; if (caption.length > 1024) caption = caption.slice(0, 1021) + '…'; }
         if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
         // Başlıkta "CANLI YAYIN" varsa görsel almayalım
         if (isLiveBroadcastTitle(title)) {
@@ -2876,23 +2886,26 @@ let publishNowStartTime = 0;
   let feed, items, validItems;
   const activePool = getActivePool();
 
-  for (feed of activePool) {
-    console.log(`📡 ${feed.label} çekiliyor... (kategori: ${settings.activeCategory})`);
+  const maxTry = Math.min(5, activePool.length);
+  for (let _i = 0; _i < maxTry; _i++) {
+    const _fi = (currentFeedIndex + _i) % activePool.length;
+    feed = activePool[_fi];
+    console.log(`📡 ${feed.label} çekiliyor... (${_i+1}/${maxTry}, kategori: ${settings.activeCategory})`);
     items = await fetchFeed(feed);
     const withUrl = items.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
     const valid = notPublished.filter((a) => {
       if (!isValidNewsItem(a, feed)) return false;
-      // Feed zaten doğru kategorideyse keyword kontrolü atla
       if (settings.activeCategory !== 'hepsi' && feed.category === settings.activeCategory) return true;
       const desc = a.contentSnippet || a.summary || a.content || a.description || '';
       return matchesActiveCategory(a.title, desc, settings.activeCategory);
     });
     console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
     validItems = sortByNeededMedia(valid, needed);
-    if (validItems.length > 0) break;
+    if (validItems.length > 0) { currentFeedIndex = (_fi + 1) % activePool.length; break; }
     console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
   }
+  if (!validItems || validItems.length === 0) currentFeedIndex = (currentFeedIndex + 1) % activePool.length;
   if (!validItems || validItems.length === 0) {
     console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
     return;
@@ -3030,7 +3043,7 @@ let publishNowStartTime = 0;
   const catEmoji2 = categoryTag ? `${categoryTag} ` : '';
   let caption = stripLinks(`${prefix}${catEmoji2}${title}`);
   if (aiSummary && aiSummary.length > 5) {
-    caption += `\n\n${cleanArrows(stripLinks(aiSummary))}`;
+    caption += `\n\n${cleanArrows(stripLinks(stripSourceDate(aiSummary)))}`;
   }
 
   if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
@@ -3489,7 +3502,7 @@ async function checkBreakingNews() {
             const normTitle = title.toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
             const normAiS = aiS.toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
             const isSameAsTitle = normAiS.includes(normTitle) || normTitle.includes(normAiS);
-            if (!isSameAsTitle) caption += `\n\n${cleanArrows(stripLinks(aiS))}`;
+            if (!isSameAsTitle) caption += `\n\n${cleanArrows(stripLinks(stripSourceDate(aiS)))}`;
           }
           if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
