@@ -693,7 +693,7 @@ let lastBreakingNewsTime = 0;
 let isCheckingBreaking = false;
 const BREAKING_MIN_GAP_MS = 5 * 60 * 1000; // 5 dakika min aralık
 // Her 2 saatte bir temizle (çok büyümemesi için)
-setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
+setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 24 * 60 * 60 * 1000);
 
 // ─── Başlık bazlı tekrar engeli — dosyaya da kaydediliyor (Railway restart'ta sıfırlanmaz) ──
 function loadPublishedTitles() {
@@ -3433,10 +3433,11 @@ async function checkBreakingNews() {
         const rawTs = item.pubDate || item.isoDate;
         const itemTs = rawTs ? new Date(rawTs).getTime() : 0;
         if (!itemTs || isNaN(itemTs) || Date.now() - itemTs > TWO_H_MS) return false;
-        // breakingPublishedUrls: in-memory, restart'ta sıfırlanır → eski kayıtlar engellemez
+        // breakingPublishedUrls: in-memory session engeli
         if (breakingPublishedUrls.has(u)) return false;
+        // publishedUrls: DB'ye kalıcı kaydedilen — restart/temizlik sonrası da engeller
+        if (publishedUrls.has(u)) return false;
         const isBreakingFeed = BREAKING_NEWS_FEEDS.some(bf => bf.url === feed.url);
-        if (!isBreakingFeed && publishedUrls.has(u)) return false;
         if (!isValidNewsItem(item, feed)) return false;
         // Özel son dakika feedlerinde başlık filtresi zorunlu değil (zaten SD içerik)
         // Normal feedlerden gelenler için başlık kontrolü zorunlu
