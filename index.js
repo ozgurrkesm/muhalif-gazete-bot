@@ -4301,9 +4301,7 @@ bot.on('callback_query', async (query) => {
       publishNowStartTime = 0;
       await bot.answerCallbackQuery(query.id, { text: '🔓 Tüm kilitler sıfırlandı!' }).catch(() => {});
       await bot.editMessageText(
-        adminPanelText() + '
-
-✅ _Yayın kilitleri sıfırlandı._',
+        adminPanelText() + '\n\n✅ _Yayın kilitleri sıfırlandı._',
         { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminPanelKeyboard() }
       );
       break;
