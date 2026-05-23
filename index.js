@@ -1572,6 +1572,10 @@ function extractWebVideo(html) {
   const anyMp4 = html.match(/["'](https?:\/\/[^"'\s]+\.(?:mp4|m3u8)(?:\?[^"'\s]*)?)["']/i)?.[1];
   if (anyMp4 && anyMp4.length < 600) return anyMp4;
 
+  // YouTube iframe embed — haber siteleri videoları genellikle böyle gömer
+  const ytEmbed = html.match(/(?:youtube\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_\-]{11})/i)?.[1];
+  if (ytEmbed) return `https://www.youtube.com/watch?v=${ytEmbed}`;
+
   return null;
 }
 
@@ -3065,7 +3069,12 @@ let publishNowStartTime = 0;
 
   try {
     if (chosenMedia.type === 'video') {
-      const webSent = await sendWebVideo(CHANNEL_ID, chosenMedia.url, caption, replyToId);
+      let webSent = false;
+      if (/youtube\.com|youtu\.be/i.test(chosenMedia.url)) {
+        webSent = await sendYouTubeVideoSmart(CHANNEL_ID, chosenMedia.url, caption);
+      } else {
+        webSent = await sendWebVideo(CHANNEL_ID, chosenMedia.url, caption, replyToId);
+      }
       if (webSent) {
         sentType = 'video';
       } else {
