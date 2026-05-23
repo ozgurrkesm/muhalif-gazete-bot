@@ -2646,15 +2646,18 @@ function buildItemMeta(item, feed) {
 
 
 async function publishNowInstant() {
-  if (publishingInProgress) {
-    if (Date.now() - publishingStartTime > PUBLISHING_TIMEOUT_MS) {
-      console.log('⚠️ publishNowInstant: kilit 5dk+ aştı, zorla sıfırlanıyor.');
-      publishingInProgress = false;
+  if (publishNowInProgress) {
+    if (Date.now() - publishNowStartTime > 2 * 60 * 1000) {
+      console.log('⚠️ publishNowInstant: kendi kilidi 2dk+ aştı, zorla sıfırlanıyor.');
+      publishNowInProgress = false;
     } else {
-      console.log('⏭ publishNowInstant: önceki döngü aktif, atlanıyor.');
-      return '⏳ Şu an başka bir haber yayınlanıyor, lütfen bekleyin.';
+      console.log('⏭ publishNowInstant: zaten çalışıyor, atlanıyor.');
+      return '⏳ Şu an haber aranıyor, lütfen 30 saniye bekleyin.';
     }
   }
+  publishNowInProgress = true;
+  publishNowStartTime = Date.now();
+  try {
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
   if (!feedPool.length) feedPool = RSS_FEEDS;
@@ -2818,11 +2821,16 @@ async function publishNowInstant() {
     }
   }
   return '⚠️ Haber yayınlanamadı, lütfen tekrar deneyin.';
+  } finally {
+    publishNowInProgress = false;
+  }
 }
 
 let publishingInProgress = false;
 let publishingStartTime = 0;
 const PUBLISHING_TIMEOUT_MS = 2 * 60 * 1000; // 2 dakika sonra otomatik sıfırla
+let publishNowInProgress = false;
+let publishNowStartTime = 0;
 
   async function publishNextNews() {
     if (publishingInProgress) {
