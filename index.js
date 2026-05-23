@@ -565,6 +565,13 @@ const BREAKING_INTERVAL_MS = 2 * 60 * 1000; // 2 dakika
       type: 'google',
       category: 'genel',
     },
+  {
+    url: 'https://haber.sol.org.tr/rss.xml',
+    label: '🔴 soL Haber',
+    source: 'soL Haber',
+    type: 'direct',
+    category: 'genel',
+  },
   ];
 
   function isBreakingNews(title) {
@@ -1612,7 +1619,7 @@ function extractSubjects(title) {
 function stripNewsSource(title) {
   // " - Kaynak Adı" veya "| Kaynak" gibi sonekleri kaldır — geniş kaynak listesi
   return (title || '')
-    .replace(/\s*[-–|]\s*(Sözcü|T24|Cumhuriyet|Hürriyet|Milliyet|Sabah|HaberTürk|Habertürk|NTV|CNN Türk|TRT|Halk TV|Tele1|BirGün|OdaTV|ANKA|Bianet|Gazete Duvar|Artı Gerçek|KRT|DHA|AA|İHA|Sputnik|BBC|Reuters|AFP|Fox|Fanatik|Sporx|Goal|A Spor|FOTOMAÇ|Fotomaç|Fotospor|Spor Arena|Spor Toto|Aspor|GZT|Gazete Oksijen|Oksijen|sporx|Spor Gazete|İleri Haber|Gerçek Hayat|Gerçekgündem|Dünya|Ekonomim|Bloomberg HT|Dünya Gazetesi|Dünyabülteni|Sabah Spor|Milliyet Spor|Hürriyet Spor|NTV Spor|A Spor|Bein Sports|Fanatik Spor|İnternetHaber|Haberler|Haberturk|Haberler\.com|Takvim|Türkiye|Akşam|Star|Güneş|Posta|Vatan|Radikal|Yeniçağ|Yeni Şafak|Karar|Türk Haber|Haber Global|Flash Haber|24 TV|360|Medyascope|Diken|Dokuz8Haber|Artı TV|Haber Sol|Gerçek Gündem|Sendika|Evrensel|Birgün|Aydınlık|Yurt|Tercüman|Milli Gazete|Yeni Akit)[^|\-]*$/i, '')
+    .replace(/\s*[-–|]\s*(Sözcü|T24|Cumhuriyet|Hürriyet|Milliyet|Sabah|HaberTürk|Habertürk|NTV|CNN Türk|TRT|Halk TV|Tele1|BirGün|OdaTV|ANKA|Bianet|Gazete Duvar|Artı Gerçek|KRT|DHA|AA|İHA|Sputnik|BBC|Reuters|AFP|Fox|Fanatik|Sporx|Goal|A Spor|FOTOMAÇ|Fotomaç|Fotospor|Spor Arena|Spor Toto|Aspor|GZT|Gazete Oksijen|Oksijen|sporx|Spor Gazete|İleri Haber|Gerçek Hayat|Gerçekgündem|Dünya|Ekonomim|Bloomberg HT|Dünya Gazetesi|Dünyabülteni|Sabah Spor|Milliyet Spor|Hürriyet Spor|NTV Spor|A Spor|Bein Sports|Fanatik Spor|İnternetHaber|Haberler|Haberturk|Haberler\.com|Takvim|Türkiye|Akşam|Star|Güneş|Posta|Vatan|Radikal|Yeniçağ|Yeni Şafak|Karar|Türk Haber|Haber Global|Flash Haber|24 TV|360|Medyascope|Diken|Dokuz8Haber|Artı TV|Haber Sol|soL Haber|soL|Gerçek Gündem|Sendika|Evrensel|Birgün|Aydınlık|Yurt|Tercüman|Milli Gazete|Yeni Akit)[^|\-]*$/i, '')
     .trim();
 }
 
@@ -2642,7 +2649,7 @@ function buildItemMeta(item, feed) {
   const rawDesc = (item.contentSnippet || item.summary || '').trim();
   const description = rawDesc
     .replace(/https?:\/\/\S+/g, '')
-    .replace(/\b(iha|dha|aa|anka|ntv|trt|cnn türk?|sözcü|hürriyet|milliyet|cumhuriyet|haberturk|habertürk|halk tv?|krt tv?)\b/gi, '')
+    .replace(/\b(iha|dha|aa|anka|ntv|trt|cnn türk?|sözcü|hürriyet|milliyet|cumhuriyet|haberturk|habertürk|halk tv?|krt tv?|sol haber|soL)\b/gi, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
   const sonDakika = isSonDakika(title, feed);
