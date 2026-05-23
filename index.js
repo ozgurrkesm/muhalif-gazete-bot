@@ -1614,7 +1614,10 @@ function cleanTitle(title) {
   t = t.replace(/\s*[-–|]\s*[A-ZĞÜŞÖÇİa-zğüşöçı]+\s+(?:ile|de|da)\s+.+$/, '').trim();
   // Başta tarih öneki: "19 Mayıs 2026 Haber başlığı" → tarihi çıkar
   t = t.replace(/^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+/, '').trim();
-  // Orijinal: sondaki "- kaynak adı" temizle
+  // Pipe-separated kategori/şehir/kaynak tagleri: "| Trabzon haberleri | Son dakika haberleri"
+  // İlk pipe'dan sonrasını tümüyle sil (Google News RSS başlık formatı)
+  if (t.includes(' | ')) t = t.split(' | ')[0].trim();
+  // Orijinal: sondaki "- kaynak adı" temizle (pipe temizliğinden sonra)
   t = t.replace(/\s*-\s*[^-]{3,}$/, '').trim();
   return t || title || '';
 }
@@ -3473,7 +3476,13 @@ async function checkBreakingNews() {
           const bestD = ogMeta.description || rawDesc || '';
           const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null);
           caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`);
-          if (aiS && aiS.length > 5) caption += `\n\n${cleanArrows(stripLinks(aiS))}`;
+          // Özet başlıkla aynı veya çok benzerse ekleme (Google News RSS'te sık karşılaşılan durum)
+          if (aiS && aiS.length > 5) {
+            const normTitle = title.toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
+            const normAiS = aiS.toLowerCase().replace(/\s+/g, ' ').slice(0, 80);
+            const isSameAsTitle = normAiS.includes(normTitle) || normTitle.includes(normAiS);
+            if (!isSameAsTitle) caption += `\n\n${cleanArrows(stripLinks(aiS))}`;
+          }
           if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
           // Haber sitesinden video — 20s timeout
