@@ -693,7 +693,7 @@ let lastBreakingNewsTime = 0;
 let isCheckingBreaking = false;
 const BREAKING_MIN_GAP_MS = 5 * 60 * 1000; // 5 dakika min aralık
 // Her 2 saatte bir temizle (çok büyümemesi için)
-setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 24 * 60 * 60 * 1000);
+setInterval(() => { breakingPublishedUrls.clear(); console.log('🔄 breakingPublishedUrls temizlendi'); }, 2 * 60 * 60 * 1000);
 
 // ─── Başlık bazlı tekrar engeli — dosyaya da kaydediliyor (Railway restart'ta sıfırlanmaz) ──
 function loadPublishedTitles() {
@@ -779,8 +779,8 @@ async function initDatabase() {
     const [settingsRes, usersRes, urlsRes, titlesRes] = await Promise.all([
       pgClient.query("SELECT value FROM bot_settings WHERE key = 'settings'"),
       pgClient.query('SELECT chat_id, data FROM bot_users'),
-      pgClient.query(`SELECT url FROM published_urls WHERE added_at > NOW() - INTERVAL '24 hours' ORDER BY added_at DESC`),
-      pgClient.query(`SELECT title FROM published_titles WHERE added_at > NOW() - INTERVAL '24 hours' ORDER BY added_at DESC`),
+      pgClient.query(`SELECT url FROM published_urls WHERE added_at > NOW() - INTERVAL '6 hours' ORDER BY added_at DESC`),
+      pgClient.query(`SELECT title FROM published_titles WHERE added_at > NOW() - INTERVAL '6 hours' ORDER BY added_at DESC`),
     ]);
 
     if (settingsRes.rows.length > 0) {
