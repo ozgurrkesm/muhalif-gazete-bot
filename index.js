@@ -2891,12 +2891,12 @@ let publishNowStartTime = 0;
   // Bir feed boş gelirse sıradakine geç — aktif kategorideki tüm feedleri dene
   const needed = getNeededMediaType();
   let feed, items, validItems;
-  const activePool = getActivePool();
+  // Her çağrıda pool'u karıştır — aynı kaynak hep ilk seçilmesin
+  const activePool = [...getActivePool()].sort(() => Math.random() - 0.5);
 
   const maxTry = Math.min(5, activePool.length);
   for (let _i = 0; _i < maxTry; _i++) {
-    const _fi = (currentFeedIndex + _i) % activePool.length;
-    feed = activePool[_fi];
+    feed = activePool[_i];
     console.log(`📡 ${feed.label} çekiliyor... (${_i+1}/${maxTry}, kategori: ${settings.activeCategory})`);
     items = await fetchFeed(feed);
     const withUrl = items.filter((a) => a.link || a.guid);
@@ -2909,10 +2909,10 @@ let publishNowStartTime = 0;
     });
     console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
     validItems = sortByNeededMedia(valid, needed);
-    if (validItems.length > 0) { currentFeedIndex = (_fi + 1) % activePool.length; break; }
+    if (validItems.length > 0) { break; }
     console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
   }
-  if (!validItems || validItems.length === 0) currentFeedIndex = (currentFeedIndex + 1) % activePool.length;
+  // shuffle zaten rotasyonu sağlar
   if (!validItems || validItems.length === 0) {
     console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
     return;
