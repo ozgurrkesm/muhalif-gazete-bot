@@ -3664,6 +3664,13 @@ function adminPanelKeyboard() {
         { text: '📋 Komutlar', callback_data: 'admin_commands' },
         { text: '🔓 Kilidi Sıfırla', callback_data: 'admin_resetlock' },
       ],
+      [
+        { text: '✍️ Metin Paylaş', callback_data: 'admin_post_text' },
+        { text: '🖼 Resim Paylaş', callback_data: 'admin_post_photo' },
+      ],
+      [
+        { text: '🗑 Haber Kaldır', callback_data: 'admin_delete_msg' },
+      ],
     ],
   };
 }
@@ -3684,6 +3691,7 @@ const BOT_COMMANDS = [
   { cmd: '/filtre temizle',     icon: '🧹', desc: 'Tüm filtreleri tek seferde siler' },
   { cmd: '/video <url>',        icon: '🎬', desc: 'Verilen URL\'den video indirir ve kanala gönderir' },
   { cmd: '/myid',               icon: '🪪', desc: 'Kendi Telegram Chat ID\'ini gösterir' },
+  { cmd: '/yorum',              icon: '💬', desc: 'Editörlere yorum veya görüş iletir' },
   { cmd: '/dur',                icon: '⏸', desc: 'Otomatik yayını duraklatır (sadece admin)' },
   { cmd: '/baslat',             icon: '▶️', desc: 'Duraklatılmış yayını yeniden başlatır (sadece admin)' },
   { cmd: '/saglik',             icon: '🩺', desc: 'Bot ve RSS kaynaklarının sağlık kontrolünü yapar' },
@@ -4033,6 +4041,19 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
+  // ─── Dinamik silme onayı (switch'ten önce işleniyor) ─────────────────────
+  if (data.startsWith('admin_confirm_delete_')) {
+    const delMsgId = parseInt(data.replace('admin_confirm_delete_', ''));
+    await bot.answerCallbackQuery(query.id).catch(() => {});
+    try {
+      await bot.deleteMessage(CHANNEL_ID, delMsgId);
+      await bot.sendMessage(chatId, '✅ Mesaj kanaldan silindi!');
+    } catch (e) {
+      await bot.sendMessage(chatId, `❌ Silinemedi: ${e.message?.slice(0,80)}`);
+    }
+    return;
+  }
+
   switch (data) {
     case 'admin_interval_menu':
       await bot.answerCallbackQuery(query.id).catch(() => {});
@@ -4315,6 +4336,36 @@ bot.on('callback_query', async (query) => {
         const errText = `❌ Yenileme hatası: ${err.message.slice(0,200)}`;
         if (refreshMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: refreshMsg.message_id }).catch(() => bot.sendMessage(chatId, errText));
       }
+      break;
+    }
+
+    case 'admin_post_text': {
+      pendingAdminAction.set(chatId, { action: 'post_text' });
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await bot.sendMessage(chatId,
+        '✍️ *Kanala Metin Paylaş*\n\nPaylaşmak istediğiniz metni yazın:\n_(İptal için /admin yazın)_',
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case 'admin_post_photo': {
+      pendingAdminAction.set(chatId, { action: 'post_photo' });
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await bot.sendMessage(chatId,
+        '🖼 *Kanala Resim Paylaş*\n\nFotoğrafı gönderin (opsiyonel açıklama da ekleyebilirsiniz):\n_(İptal için /admin yazın)_',
+        { parse_mode: 'Markdown' }
+      );
+      break;
+    }
+
+    case 'admin_delete_msg': {
+      pendingAdminAction.set(chatId, { action: 'delete_msg' });
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      await bot.sendMessage(chatId,
+        '🗑 *Haber Kaldır*\n\nSilmek istediğiniz kanal mesajını bota *iletin (forward)* VEYA mesaj ID numarasını yazın:\n_(İptal için /admin yazın)_',
+        { parse_mode: 'Markdown' }
+      );
       break;
     }
 
@@ -4955,17 +5006,78 @@ http.createServer((req, res) => {
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
 const pendingReplies = new Map(); // adminMsgId → { userId, userName }
+const pendingAdminAction = new Map(); // adminChatId → { action: 'post_text'|'post_photo'|'delete_msg' }
 
 bot.on('message', async (msg) => {
-  if (!msg.text) return;
-  if (msg.text.startsWith('/')) return; // komutlar zaten işleniyor
   if (msg.chat.type !== 'private') return;
+  if (msg.text?.startsWith('/')) return; // komutlar zaten işleniyor
   const chatId = String(msg.chat.id);
 
-  // Admin ise normal davran
+  // ── Admin işlemleri ──────────────────────────────────────────────────────────
   if (isAdmin(chatId)) {
+
+    // Bekleyen admin aksiyonu var mı?
+    if (pendingAdminAction.has(chatId)) {
+      const { action } = pendingAdminAction.get(chatId);
+
+      // Metin paylaşma
+      if (action === 'post_text' && msg.text) {
+        pendingAdminAction.delete(chatId);
+        try {
+          await bot.sendMessage(CHANNEL_ID, msg.text);
+          await bot.sendMessage(chatId, '✅ Metin kanala paylaşıldı!');
+        } catch (e) {
+          await bot.sendMessage(chatId, `❌ Gönderilemedi: ${e.message?.slice(0,100)}`);
+        }
+        return;
+      }
+
+      // Resim paylaşma
+      if (action === 'post_photo' && msg.photo) {
+        pendingAdminAction.delete(chatId);
+        const photo = msg.photo[msg.photo.length - 1];
+        try {
+          await bot.sendPhoto(CHANNEL_ID, photo.file_id, msg.caption ? { caption: msg.caption } : {});
+          await bot.sendMessage(chatId, '✅ Fotoğraf kanala paylaşıldı!');
+        } catch (e) {
+          await bot.sendMessage(chatId, `❌ Gönderilemedi: ${e.message?.slice(0,100)}`);
+        }
+        return;
+      }
+
+      // Haber silme — forward veya ID
+      if (action === 'delete_msg') {
+        const chanUsername = CHANNEL_ID.replace('@', '');
+        const isFwdFromChan = msg.forward_from_chat &&
+          (msg.forward_from_chat.username === chanUsername || msg.forward_from_chat.type === 'channel');
+        const fwdMsgId = isFwdFromChan ? msg.forward_from_message_id : null;
+        const textMsgId = (!fwdMsgId && msg.text && /^\d+$/.test(msg.text.trim()))
+          ? parseInt(msg.text.trim()) : null;
+        const targetId = fwdMsgId || textMsgId;
+
+        if (targetId) {
+          pendingAdminAction.delete(chatId);
+          await bot.sendMessage(chatId,
+            `🗑 Mesaj ID: *${targetId}* kanaldan silinsin mi?`,
+            {
+              parse_mode: 'Markdown',
+              reply_markup: { inline_keyboard: [[
+                { text: '✅ Evet, Sil', callback_data: `admin_confirm_delete_${targetId}` },
+                { text: '❌ İptal', callback_data: 'admin_back' },
+              ]] }
+            }
+          );
+        } else {
+          await bot.sendMessage(chatId,
+            '⚠️ Lütfen kanal mesajını bota iletin (forward) veya mesaj ID numarasını yazın.'
+          );
+        }
+        return;
+      }
+    }
+
     // Admin bot üzerinden bir yoruma yanıt veriyorsa kullanıcıya ilet
-    if (msg.reply_to_message && pendingReplies.has(msg.reply_to_message.message_id)) {
+    if (msg.text && msg.reply_to_message && pendingReplies.has(msg.reply_to_message.message_id)) {
       const { userId, userName } = pendingReplies.get(msg.reply_to_message.message_id);
       try {
         await bot.sendMessage(userId, `📣 *Editörden yanıt:*\n\n${msg.text}`, { parse_mode: 'Markdown' });
@@ -4977,29 +5089,51 @@ bot.on('message', async (msg) => {
     return;
   }
 
-  // Kullanıcı yorumu — admin'e ilet
+  // ── Kullanıcı yorumu — admin'e ilet (metin veya fotoğraf) ───────────────────
+  if (!msg.text && !msg.photo) return;
   const userName = msg.from?.first_name || msg.from?.username || 'Anonim';
   const adminId = ADMIN_CHAT_ID || settings.adminChatIds[0];
   if (!adminId) return;
 
   try {
-    const forwarded = await bot.sendMessage(
-      adminId,
-      `💬 *Yeni Yorum*\n👤 ${userName} (ID: ${chatId})\n\n${msg.text.slice(0, 1000)}`,
-      {
-        parse_mode: 'Markdown',
-        reply_markup: {
-          inline_keyboard: [[
-            { text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }
-          ]]
+    let forwarded;
+    if (msg.photo) {
+      // Fotoğraflı yorum
+      const photo = msg.photo[msg.photo.length - 1];
+      forwarded = await bot.sendPhoto(
+        adminId,
+        photo.file_id,
+        {
+          caption: `💬 *Yeni Yorum (Fotoğraf)*\n👤 ${userName} (ID: ${chatId})${msg.caption ? '\n\n' + msg.caption.slice(0, 500) : ''}`,
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }]] }
         }
-      }
-    );
+      );
+    } else {
+      // Metin yorumu
+      forwarded = await bot.sendMessage(
+        adminId,
+        `💬 *Yeni Yorum*\n👤 ${userName} (ID: ${chatId})\n\n${msg.text.slice(0, 1000)}`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }]] }
+        }
+      );
+    }
     pendingReplies.set(forwarded.message_id, { userId: chatId, userName });
     await bot.sendMessage(msg.chat.id, '✅ Yorumunuz editöre iletildi, teşekkürler!');
   } catch (e) {
     console.error('Yorum iletilemedi:', e.message);
   }
+});
+
+// ─── /yorum komutu ──────────────────────────────────────────────────────────
+bot.onText(/\/yorum/, (msg) => {
+  if (msg.chat.type !== 'private') return;
+  bot.sendMessage(msg.chat.id,
+    '💬 *Yorum Yap*\n\nBir haber veya konu hakkında görüşünüzü paylaşmak için bu sohbete mesajınızı yazın — editörlere iletilecektir.\n\nFotoğraflı yorum da gönderebilirsiniz.',
+    { parse_mode: 'Markdown' }
+  );
 });
 
 // Admin "Yanıtla" butonuna basarsa
