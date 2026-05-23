@@ -594,7 +594,7 @@ const parser = new RssParser({
       ['media:group', 'mediaGroup', { keepArray: false }],
     ],
   },
-  timeout: 30000,
+  timeout: 8000,
   headers: {
     'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)',
     'Accept': 'application/rss+xml, application/xml, text/xml, application/atom+xml',
@@ -2615,7 +2615,7 @@ async function fetchFeedXml(url, maxRedirects = 5) {
         }
       });
       req.on('error', reject);
-      req.setTimeout(15000, () => { req.destroy(); reject(new Error('timeout')); });
+      req.setTimeout(6000, () => { req.destroy(); reject(new Error('timeout')); });
     });
     if (result.redirect) { currentUrl = result.redirect; continue; }
     return result.xml;
@@ -2899,10 +2899,16 @@ let publishNowStartTime = 0;
   const activePool = [...getActivePool()].sort(() => Math.random() - 0.5);
 
   const maxTry = Math.min(5, activePool.length);
-  for (let _i = 0; _i < maxTry; _i++) {
-    feed = activePool[_i];
-    console.log(`📡 ${feed.label} çekiliyor... (${_i+1}/${maxTry}, kategori: ${settings.activeCategory})`);
-    items = await fetchFeed(feed);
+  // Feedleri paralel çek — sıralı bekleme yerine hepsi aynı anda başlasın
+  const feedBatch = activePool.slice(0, maxTry);
+  console.log(`📡 ${feedBatch.length} feed paralel çekiliyor... (kategori: ${settings.activeCategory})`);
+  const batchResults = await Promise.allSettled(
+    feedBatch.map(f => fetchFeed(f).then(its => ({ feed: f, items: its })))
+  );
+  for (const res of batchResults) {
+    if (res.status !== 'fulfilled') continue;
+    feed = res.value.feed;
+    items = res.value.items;
     const withUrl = items.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
     const valid = notPublished.filter((a) => {
@@ -2911,10 +2917,9 @@ let publishNowStartTime = 0;
       const desc = a.contentSnippet || a.summary || a.content || a.description || '';
       return matchesActiveCategory(a.title, desc, settings.activeCategory);
     });
-    console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
+    console.log(`🔎 ${feed.source}: toplam=${items.length} yeni=${notPublished.length} geçerli=${valid.length}`);
     validItems = sortByNeededMedia(valid, needed);
     if (validItems.length > 0) { break; }
-    console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
   }
   // shuffle zaten rotasyonu sağlar
   if (!validItems || validItems.length === 0) {
