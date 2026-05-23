@@ -3638,6 +3638,7 @@ function adminPanelKeyboard() {
       ],
       [
         { text: '📋 Komutlar', callback_data: 'admin_commands' },
+        { text: '🔓 Kilidi Sıfırla', callback_data: 'admin_resetlock' },
       ],
     ],
   };
@@ -4290,6 +4291,21 @@ bot.on('callback_query', async (query) => {
         const errText = `❌ Yenileme hatası: ${err.message.slice(0,200)}`;
         if (refreshMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: refreshMsg.message_id }).catch(() => bot.sendMessage(chatId, errText));
       }
+      break;
+    }
+
+    case 'admin_resetlock': {
+      publishingInProgress = false;
+      publishNowInProgress = false;
+      publishingStartTime = 0;
+      publishNowStartTime = 0;
+      await bot.answerCallbackQuery(query.id, { text: '🔓 Tüm kilitler sıfırlandı!' }).catch(() => {});
+      await bot.editMessageText(
+        adminPanelText() + '
+
+✅ _Yayın kilitleri sıfırlandı._',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: adminPanelKeyboard() }
+      );
       break;
     }
 
