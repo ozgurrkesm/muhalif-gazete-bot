@@ -2764,20 +2764,7 @@ async function publishNowInstant() {
         if (ogImg && isLiveBroadcastImage(ogImg)) { console.log(`🚫 og:image canlı yayın — atlandı: ${ogImg.slice(0,60)}`); ogImg = null; }
         const ogImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
 
-        // ═══ 2. Sayfadaki gömülü video var mı? (Google News değilse) ════
-        let articleVidUrl = null;
-        if (sentType === 'none' && !realUrl.includes('news.google.com')) {
-          articleVidUrl = await fetchArticleHtmlAndExtractVideo(realUrl);
-          if (articleVidUrl) tgLog(`🎬 Sayfa videosu bulundu: ${articleVidUrl.slice(0, 60)}`);
-        }
-
-        // ═══ 3. Video gönder (doğrudan, link/buton yok) ═════════════════
-        if (sentType === 'none' && articleVidUrl) {
-          const ok = await sendWebVideo(CHANNEL_ID, articleVidUrl, caption);
-          if (ok) { sentType = 'video'; mediaStats.video++; }
-        }
-
-        // ═══ 4. Resim gönder ════════════════════════════════════════════
+        // ═══ 3. Resim gönder ════════════════════════════════════════════
         if (sentType === 'none' && ogImg) {
           tgLog(`🖼 Görsel gönderiliyor: ${ogImg.slice(0, 60)}`);
           const _ogImg2 = ogImg2 && normalizeImageUrl(ogImg2) !== normalizeImageUrl(ogImg) ? ogImg2 : null;
@@ -4108,7 +4095,7 @@ bot.on('callback_query', async (query) => {
         chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
         reply_markup: adminPanelKeyboard(),
       }).catch(() => {});
-      const progressMsg = await bot.sendMessage(chatId, '⏳ Video/haber aranıyor, bekle...').catch(() => null);
+      const progressMsg = await bot.sendMessage(chatId, '⏳ Haber aranıyor, bekle...').catch(() => null);
       publishNowInstant().then(async (resultMsg) => {
         const text = resultMsg || '✅ Yayınlandı.';
         if (progressMsg) bot.editMessageText(text, { chat_id: chatId, message_id: progressMsg.message_id }).catch(() => bot.sendMessage(chatId, text).catch(() => {}));
