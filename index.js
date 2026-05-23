@@ -719,12 +719,11 @@ const publishedTitlesSession = loadPublishedTitles();
 
 async function persistPublishedTitles() {
   try {
-    let arr = [...publishedTitlesSession];
-    if (arr.length > 3000) arr = arr.slice(arr.length - 2000);
-    fs.writeFileSync(PUBLISHED_TITLES_FILE, JSON.stringify(arr));
-    if (dbReady && pgClient && arr.length > 0) {
-      for (let i = 0; i < arr.length; i += 500) {
-        const chunk = arr.slice(i, i + 500);
+    const fullArr = [...publishedTitlesSession];
+    // DB'ye HEPSİNİ kaydet — restart sonrası hiçbir başlık unutulmasın
+    if (dbReady && pgClient && fullArr.length > 0) {
+      for (let i = 0; i < fullArr.length; i += 500) {
+        const chunk = fullArr.slice(i, i + 500);
         const placeholders = chunk.map((_, idx) => `($${idx + 1})`).join(',');
         await pgClient.query(
           `INSERT INTO published_titles(title) VALUES ${placeholders} ON CONFLICT(title) DO NOTHING`,
@@ -732,6 +731,9 @@ async function persistPublishedTitles() {
         );
       }
     }
+    // Dosyaya son 10000'i yaz
+    const fileArr = fullArr.length > 10000 ? fullArr.slice(fullArr.length - 10000) : fullArr;
+    fs.writeFileSync(PUBLISHED_TITLES_FILE, JSON.stringify(fileArr));
   } catch (e) { console.error('persistPublishedTitles hatası:', e.message); }
 }
 setInterval(persistPublishedTitles, 30 * 1000);
@@ -2893,7 +2895,18 @@ let publishNowStartTime = 0;
     feed = res.value.feed;
     items = res.value.items;
     const withUrl = items.filter((a) => a.link || a.guid);
-    const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
+    const notPublished = withUrl.filter((a) => {
+      const itemUrl = a.link || a.guid;
+      if (publishedUrls.has(itemUrl)) return false;
+      // Başlık kontrolü — farklı URL ama aynı haber olmasın
+      const norm = normalizeTitle(a.title);
+      if (publishedTitlesSession.has(norm)) {
+        // Bu URL'yi de blokla ki bir daha gelmesin
+        publishedUrls.add(itemUrl);
+        return false;
+      }
+      return true;
+    });
     const valid = notPublished.filter((a) => {
       if (!isValidNewsItem(a, feed)) return false;
       if (settings.activeCategory !== 'hepsi' && feed.category === settings.activeCategory) return true;
@@ -3006,7 +3019,11 @@ let publishNowStartTime = 0;
   const url = chosenItem.link || chosenItem.guid;
   const { title: checkTitle2 } = buildItemMeta(chosenItem, feed);
   if (isTitleDuplicate(checkTitle2)) {
-    console.log(`⏭ Başlık zaten yayınlandı (session): ${checkTitle2.slice(0, 40)}`);
+    // URL'yi de blokla — bir daha fetch edilmesin
+    publishedUrls.add(url);
+    if (chosenCandidateUrl && chosenCandidateUrl !== url) publishedUrls.add(chosenCandidateUrl);
+    persistPublishedUrls();
+    console.log(`⏭ Başlık zaten yayınlandı (bloklandı): ${checkTitle2.slice(0, 40)}`);
     return;
   }
 
