@@ -2647,8 +2647,13 @@ function buildItemMeta(item, feed) {
 
 async function publishNowInstant() {
   if (publishingInProgress) {
-    console.log('⏭ publishNowInstant: önceki döngü aktif, atlanıyor.');
-    return '⏳ Şu an başka bir haber yayınlanıyor, lütfen bekleyin.';
+    if (Date.now() - publishingStartTime > PUBLISHING_TIMEOUT_MS) {
+      console.log('⚠️ publishNowInstant: kilit 5dk+ aştı, zorla sıfırlanıyor.');
+      publishingInProgress = false;
+    } else {
+      console.log('⏭ publishNowInstant: önceki döngü aktif, atlanıyor.');
+      return '⏳ Şu an başka bir haber yayınlanıyor, lütfen bekleyin.';
+    }
   }
   const cat = settings.activeCategory;
   let feedPool = cat === 'hepsi' ? RSS_FEEDS : RSS_FEEDS.filter(f => f.category === cat);
@@ -2817,7 +2822,7 @@ async function publishNowInstant() {
 
 let publishingInProgress = false;
 let publishingStartTime = 0;
-const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırla
+const PUBLISHING_TIMEOUT_MS = 2 * 60 * 1000; // 2 dakika sonra otomatik sıfırla
 
   async function publishNextNews() {
     if (publishingInProgress) {
@@ -2833,7 +2838,7 @@ const PUBLISHING_TIMEOUT_MS = 5 * 60 * 1000; // 5 dakika sonra otomatik sıfırl
     publishingStartTime = Date.now();
     try {
       const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('publishNextNews 4dk timeout')), 4 * 60 * 1000)
+        setTimeout(() => reject(new Error('publishNextNews 2dk timeout')), 2 * 60 * 1000)
       );
       await Promise.race([_publishNextNewsInner(), timeout]);
     } catch (e) {
