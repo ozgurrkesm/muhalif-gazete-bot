@@ -673,12 +673,11 @@ function loadPublishedUrls() {
 
 async function persistPublishedUrls() {
   try {
-    let arr = [...publishedUrls];
-    if (arr.length > 5000) arr = arr.slice(arr.length - 3000);
-    fs.writeFileSync(PUBLISHED_FILE, JSON.stringify(arr));
-    if (dbReady && pgClient && arr.length > 0) {
-      for (let i = 0; i < arr.length; i += 500) {
-        const chunk = arr.slice(i, i + 500);
+    const fullArr = [...publishedUrls];
+    // DB'ye HEPSİNİ kaydet — restart sonrası hiçbir URL unutulmasın
+    if (dbReady && pgClient && fullArr.length > 0) {
+      for (let i = 0; i < fullArr.length; i += 500) {
+        const chunk = fullArr.slice(i, i + 500);
         const placeholders = chunk.map((_, idx) => `($${idx + 1})`).join(',');
         await pgClient.query(
           `INSERT INTO published_urls(url) VALUES ${placeholders} ON CONFLICT(url) DO NOTHING`,
@@ -686,6 +685,9 @@ async function persistPublishedUrls() {
         );
       }
     }
+    // Dosyaya son 10000'i yaz (disk tasarrufu)
+    const fileArr = fullArr.length > 10000 ? fullArr.slice(fullArr.length - 10000) : fullArr;
+    fs.writeFileSync(PUBLISHED_FILE, JSON.stringify(fileArr));
   } catch (e) { console.error('persistPublishedUrls hatası:', e.message); }
 }
 
@@ -868,12 +870,6 @@ function trackError(context, message) {
 }
 
 function getNeededMediaType() {
-  const total = mediaStats.image + mediaStats.video + mediaStats.text;
-  if (total === 0) return 'image';
-  const imageRatio = mediaStats.image / total;
-  const videoRatio = mediaStats.video / total;
-  // Her 4 haberden 1'i web gömülü video olsun (%25 hedef)
-  if (videoRatio < 0.25) return 'video';
   return 'image';
 }
 
@@ -2860,7 +2856,7 @@ let publishNowStartTime = 0;
     publishingStartTime = Date.now();
     try {
       const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('publishNextNews 2dk timeout')), 2 * 60 * 1000)
+        setTimeout(() => reject(new Error('publishNextNews 45s timeout')), 45 * 1000)
       );
       await Promise.race([_publishNextNewsInner(), timeout]);
     } catch (e) {
@@ -2963,10 +2959,10 @@ let publishNowStartTime = 0;
       media = { type: null, url: null };
     }
 
-    // OG meta çek (görsel + açıklama) (25s timeout)
+    // OG meta çek (görsel + açıklama) (8s timeout)
     const ogMeta = await Promise.race([
       fetchOgMeta(candidateUrl),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('fetchOgMeta 25s timeout')), 25000))
+      new Promise((_, rej) => setTimeout(() => rej(new Error('fetchOgMeta 8s timeout')), 8000))
     ]).catch(() => ({}));
     if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
     if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
@@ -3587,7 +3583,7 @@ async function checkBreakingNews() {
 
   function resetInterval() {
     if (publishInterval) clearInterval(publishInterval);
-    const intervalMs = (settings.intervalMinutes || 1.5) * 60 * 1000;
+    const intervalMs = (settings.intervalMinutes || 1) * 60 * 1000;
     publishInterval = setInterval(() => {
       publishNextNews().catch(e => console.error('⚠️ Zamanlayıcı hata:', e.message));
     }, intervalMs);
