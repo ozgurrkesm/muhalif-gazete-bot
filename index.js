@@ -2874,35 +2874,22 @@ let publishNowStartTime = 0;
   // Bir feed boş gelirse sıradakine geç — aktif kategorideki tüm feedleri dene
   const needed = getNeededMediaType();
   let feed, items, validItems;
-  const triedFeeds = new Set();
-  let attempts = 0;
-  // Aktif kategorinin pool boyutunu kullan — sadece o kategorinin feedleri denenir
   const activePool = getActivePool();
-  const maxAttempts = activePool.length;
 
-  while (triedFeeds.size < maxAttempts) {
-    feed = getActiveFeed();
-    attempts++;
-    if (triedFeeds.has(feed.url)) {
-      if (attempts > maxAttempts * 3) break; // sonsuz döngü koruması
-      continue;
-    }
-    triedFeeds.add(feed.url);
-
-    console.log(`📡 ${feed.label} çekiliyor... (${triedFeeds.size}/${maxAttempts}, kategori: ${settings.activeCategory})`);
+  for (feed of activePool) {
+    console.log(`📡 ${feed.label} çekiliyor... (kategori: ${settings.activeCategory})`);
     items = await fetchFeed(feed);
     const withUrl = items.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
     const valid = notPublished.filter((a) => {
       if (!isValidNewsItem(a, feed)) return false;
-      // Feed zaten doğru kategorideyse keyword kontrolü atla — çift filtre haberleri engelliyor
+      // Feed zaten doğru kategorideyse keyword kontrolü atla
       if (settings.activeCategory !== 'hepsi' && feed.category === settings.activeCategory) return true;
       const desc = a.contentSnippet || a.summary || a.content || a.description || '';
       return matchesActiveCategory(a.title, desc, settings.activeCategory);
     });
     console.log(`🔎 ${feed.source}: toplam=${items.length} url=${withUrl.length} yeni=${notPublished.length} geçerli=${valid.length} publishedUrls=${publishedUrls.size}`);
     validItems = sortByNeededMedia(valid, needed);
-
     if (validItems.length > 0) break;
     console.log(`ℹ️ ${feed.source}: yeni haber yok, sıradaki deneniyor...`);
   }
