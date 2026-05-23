@@ -1813,6 +1813,17 @@ function isLiveBroadcastImage(url) {
   if (/(ntv|cnnturk|haberturk|trtworld|trthaber|a2tv|teve2|fox[-_]?tv|showtv|atv|kanal[d7]|bloomberg|360tv)[./].*canl/i.test(u)) return true;
   // "canli" kelimesi path segmentinde
   if (/\/canli[-_]|[-_]canli\//.test(u)) return true;
+  // Canlı yayın / stream içeriği belirten genel kalıplar
+  if (/\/live\//i.test(u) && /\.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  if (/\/stream\//i.test(u) && /\.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  if (/\/tv[-_]stream|stream[-_]thumb|live[-_]thumb|thumb[-_]live/.test(u)) return true;
+  // Yaygın Türk TV kanalı CDN'leri — tüm alt yollar
+  if (/(star[-_]?tv|show[-_]?tv|fox[-_]?tv|tgrt|ulusal|halk[-_]?tv|krt|tele[-_]?1|cem[-_]?tv|beyaz[-_]?tv|24[-_]?tv|artı[-_]?1|tv[-_]?100)[./]/.test(u)
+      && /(canl|live|stream|yayin)/i.test(u)) return true;
+  // Bilinen canlı yayın görsel isimleri
+  if (/\/(canli|live|yayin|broadcast)([-_.]|$)/.test(u) && /\.(jpg|jpeg|png|webp)/i.test(u)) return true;
+  // YouTube canlı yayın thumbnail işaretleri
+  if (/ytimg\.com.*\/vi\//.test(u) && /hqdefault|maxresdefault/.test(u) && /live/i.test(u)) return true;
   return false;
 }
 
@@ -1842,15 +1853,21 @@ function upgradeImageUrl(url) {
   u = u.replace(/([?&])format=(?:thumb|thumbnail|small|low|preview)/gi, (_, sep) => sep);
   // Temizlik: ?& && sondaki ? veya &
   u = u.replace(/[?&]([?&])+/g, (m) => m[0]).replace(/[?&]$/g, '');
-  // Boş soru işareti kaldır
-  u = u.replace(/\?$/, '');
+  // Boş soru işareti/& kaldır
+  u = u.replace(/[?&]$/, '');
 
   // ── Path tabanlı boyut temizliği (Türk CDN'leri) ────────────────────
   // /144x81/ /300x200/ /800x600/ → orijinal yol
   u = u.replace(/\/\d{2,4}x\d{2,4}\//gi, '/');
-  // _144x81.jpg -300x200.jpg → .jpg
+  // _144x81.jpg  -300x200.jpg → .jpg
   u = u.replace(/[_-]\d{2,4}x\d{2,4}(\.(jpg|jpeg|png|webp|gif))/gi, '$1');
-  // /thumb/ /small/ /medium/ /low/ /preview/ → /
+  // _144w.jpg  _80h.jpg tek-boyut soneki → .jpg
+  u = u.replace(/[_-]\d{2,4}[wh](\.(jpg|jpeg|png|webp|gif))/gi, '$1');
+  // /144/ veya /80/ gibi tek sayıdan oluşan CDN path segmenti → /
+  u = u.replace(/\/(\d{2,4})\//g, (m, n) => (parseInt(n) <= 1200 ? '/' : m));
+  // /w_144/ /w144/ /h_80/ CDN kalıpları → /
+  u = u.replace(/\/[wh]_?\d{2,4}\//gi, '/');
+  // /thumb/ /small/ /medium/ /low/ /preview/ /thumbnail/ → /
   u = u.replace(/\/(thumb|small|medium|low|preview|thumbnail|mini|tiny|crop)\//gi, '/');
   // /original/ /large/ /full/ /high/ → zaten büyük, bırak
 
@@ -1860,9 +1877,12 @@ function upgradeImageUrl(url) {
   // ── Sabah/NTV/Haberler tipi CDN kalıpları ────────────────────────────
   // ia.sabah.com.tr/thumb/144/81/... → /thumb/0/0/...
   u = u.replace(/(sabah\.com\.tr\/thumb\/?)\d+\/\d+\//, '$10/0/');
-  // Haberler.com: resize/144x81/ kaldır
+  // Haberler.com / Cumhuriyet: resize/144x81/ veya /144x81/ kaldır
   u = u.replace(/\/resize\/[\d]+x[\d]+\//gi, '/');
-  // NTV: -144x81 zaten üstte yakalandı
+  // Sözcü / T24 CDN: /DosyaUpload/144/ → /DosyaUpload/
+  u = u.replace(/(DosyaUpload|upload|Upload)\/\d+\//g, '$1/');
+  // Milliyet / Hurriyet: /s144x81.jpg → .jpg
+  u = u.replace(/\/s\d{2,4}x\d{2,4}(\.(jpg|jpeg|png|webp))/gi, '$1');
 
   return u;
 }
@@ -3473,8 +3493,11 @@ async function checkBreakingNews() {
           if (sentType !== 'video') {
             const rssMedia = extractMedia(item);
             if (rssMedia.url) rssMedia.url = upgradeImageUrl(rssMedia.url);
-            const img1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
-            const img2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
+            // Canlı yayın filtresi — son koruma katmanı
+            const rawImg1 = ogMeta.image ? upgradeImageUrl(ogMeta.image) : (rssMedia.type === 'image' ? rssMedia.url : null);
+            const img1 = (rawImg1 && !isLiveBroadcastImage(rawImg1) && !isGenericOrLive(rawImg1)) ? rawImg1 : null;
+            const rawImg2 = ogMeta.image2 ? upgradeImageUrl(ogMeta.image2) : null;
+            const img2 = (rawImg2 && !isLiveBroadcastImage(rawImg2)) ? rawImg2 : null;
 
             const _img2sd = img2 && normalizeImageUrl(img2) !== normalizeImageUrl(img1) ? img2 : null;
             if (img1 && _img2sd) {
