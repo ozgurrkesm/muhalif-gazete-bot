@@ -2976,15 +2976,6 @@ let publishNowStartTime = 0;
       media = { type: null, url: null };
     }
 
-    // Web sayfasından video çıkar (30s timeout)
-    if (!media.url || media.type !== 'video') {
-      const webVid = await Promise.race([
-        fetchArticleHtmlAndExtractVideo(candidateUrl),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('fetchArticle 30s timeout')), 30000))
-      ]).catch(() => null);
-      if (webVid) { media = { type: 'video', url: webVid }; console.log(`🎬 Web video: ${webVid.slice(0, 60)}`); }
-    }
-
     // OG meta çek (görsel + açıklama) (25s timeout)
     const ogMeta = await Promise.race([
       fetchOgMeta(candidateUrl),
