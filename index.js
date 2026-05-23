@@ -2563,7 +2563,10 @@ function getActiveFeed() {
 function getActivePool() {
   const cat = settings.activeCategory;
   if (cat === 'hepsi') return RSS_FEEDS;
-  const pool = RSS_FEEDS.filter((f) => f.category === cat);
+  const exact = RSS_FEEDS.filter((f) => f.category === cat);
+  const general = RSS_FEEDS.filter((f) => f.category === 'genel');
+  // Hem kategori feedleri hem genel feedler — genel feedlerde keyword filtresi uygulanır
+  const pool = [...exact, ...general.filter(g => !exact.find(e => e.url === g.url))];
   return pool.length > 0 ? pool : RSS_FEEDS;
 }
 
@@ -2685,8 +2688,11 @@ async function publishNowInstant() {
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
         // Aktif kategoriye uyan haberler — hepsi veya video seçiliyse filtre yok
         if (!['hepsi', 'video'].includes(cat)) {
-          const desc = a.contentSnippet || a.summary || a.content || a.description || '';
-          if (!matchesActiveCategory(t, desc, cat)) return false;
+          // Feed zaten doğru kategorideyse keyword kontrolü atla
+          if (feed.category !== cat) {
+            const desc = a.contentSnippet || a.summary || a.content || a.description || '';
+            if (!matchesActiveCategory(t, desc, cat)) return false;
+          }
         }
         return true;
       })
@@ -2889,6 +2895,8 @@ let publishNowStartTime = 0;
     const notPublished = withUrl.filter((a) => !publishedUrls.has(a.link || a.guid));
     const valid = notPublished.filter((a) => {
       if (!isValidNewsItem(a, feed)) return false;
+      // Feed zaten doğru kategorideyse keyword kontrolü atla — çift filtre haberleri engelliyor
+      if (settings.activeCategory !== 'hepsi' && feed.category === settings.activeCategory) return true;
       const desc = a.contentSnippet || a.summary || a.content || a.description || '';
       return matchesActiveCategory(a.title, desc, settings.activeCategory);
     });
