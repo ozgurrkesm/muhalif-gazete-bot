@@ -500,7 +500,7 @@ const INTERVAL_OPTIONS = [1, 1.5, 3, 5, 10, 15, 30];
     const CATEGORY_KEYWORDS = {
       spor: ['futbol','maç ','maçı','gol','transfer','fenerbahçe','galatasaray','beşiktaş','trabzonspor','milli takım','süper lig','basketbol','tenis','formula','olimpiyat','şampiyon','teknik direktör','taraftar',' lig ',' lig,','kulüp','atlet','maraton','yüzme','voleybol','spor','stadyum','deplasman','forma','golcü','kaleci','defans','hücum','turnuva','kupası','derbi'],
       ekonomi: ['dolar','euro','faiz','enflasyon','tcmb','borsa','bist','merkez bankası','ihracat','ithalat','büyüme','bütçe','vergi','işsizlik','piyasa','hisse','altın','döviz','kredi','hazine','ekonomi','gdp','gsyih','ticaret','sterlin','yen','yuan','ruble','emtia','petrol','doğalgaz','akaryakıt','benzin','motorin','elektrik faturası','fiyat artışı','zam','indirim','maaş','asgari ücret','işçi','sendika','grev','banka','merkez bankası','faiz kararı','enflasyon rakamı','tüfe','üfe','büyüme rakamı','cari açık','dış ticaret','sanayi üretimi','imalat','ihracat rekoru','yatırım','fon','kripto para','bitcoin','ethereum','altın fiyatı','dolar kuru','euro kuru','konut','kira','gayrimenkul','inşaat','konut fiyatı'],
-      dunya: ['ukrayna','rusya','abd ','nato','birleşmiş milletler','bm ','suriye','gazze','israil','filistin','irak','iran','çin','almanya','fransa','ingiltere','putin','biden','trump','savaş','uluslararası','küresel','dış politika'],
+      dunya: ['ukrayna','rusya','abd ','nato','birleşmiş milletler','bm ','suriye','gazze','israil','filistin','irak','iran','çin','almanya','fransa','ingiltere','putin','biden','trump','savaş','uluslararası','küresel','dış politika','avrupa','ab ','avrupa birliği','yunanistan','balkanlar','japonya','hindistan','pakistan','afganistan','mısır','suudi arabistan','körfez','orta doğu','ortadoğu','new york','washington','londra','paris','berlin','moskova','pekin','birleşik krallık','dışişleri','büyükelçi','diplomatik','yabancı','uluslararası','dünya genelinde','ülke','ülkeleri','küresel kriz','insani yardım','mülteci','göç'],
       teknoloji: ['yapay zeka','ai ','teknoloji','yazılım','donanım','uygulama','sosyal medya','twitter','instagram','google','apple','microsoft','blockchain','kripto','iphone','android','elektrikli araç','elektrikli otomobil','tesla','spacex','elon musk','nükleer enerji','yenilenebilir enerji','siber güvenlik','siber saldırı','veri ihlali','startup','girişim','unicorn','e-ticaret','metaverse','5g','6g','quantum','kuantum','robot','otomasyon','drone','insansız','uzay','roket','satellite','uydu','chip','çip','semiconductör','nvidia','amd','intel','samsung','huawei','tiktok','youtube','netflix','spotify','openai','chatgpt','gemini','claude','llm','büyük dil','oyun','gaming','playstation','xbox','steam','twitch','uygulama mağazası'],
       politika: ['cumhurbaşkanı','erdoğan','meclis','hükümet','bakan','chp','akp','mhp','hdp','dip','parti ','muhalefet','seçim','milletvekili','tbmm','anayasa','siyasi','muhalif','sandık','koalisy'],
     };
@@ -2672,6 +2672,11 @@ async function publishNowInstant() {
         const t = cleanTitle(a.title);
         if (t.length < 10) return false;
         if (BLOCKED_TITLE_PATTERNS.some(p => p.test(t))) { console.log(`⛔ Junk başlık atlandı: ${t.slice(0,50)}`); return false; }
+        // Aktif kategoriye uyan haberler — hepsi veya video seçiliyse filtre yok
+        if (!['hepsi', 'video'].includes(cat)) {
+          const desc = a.contentSnippet || a.summary || a.content || a.description || '';
+          if (!matchesActiveCategory(t, desc, cat)) return false;
+        }
         return true;
       })
       .slice(0, 10);
@@ -3424,8 +3429,9 @@ async function checkBreakingNews() {
       const newItems = items.filter(item => {
         const u = item.link || item.guid;
         if (!u) return false;
-        // Son 2 saat filtresi — tarihsiz veya 2 saatten eski haberler kesinlikle atla
-        const itemTs = item.pubDate ? new Date(item.pubDate).getTime() : 0;
+        // Son 2 saat filtresi — pubDate yoksa isoDate fallback, her ikisi de yoksa atla
+        const rawTs = item.pubDate || item.isoDate;
+        const itemTs = rawTs ? new Date(rawTs).getTime() : 0;
         if (!itemTs || isNaN(itemTs) || Date.now() - itemTs > TWO_H_MS) return false;
         // breakingPublishedUrls: in-memory, restart'ta sıfırlanır → eski kayıtlar engellemez
         if (breakingPublishedUrls.has(u)) return false;
@@ -3438,7 +3444,8 @@ async function checkBreakingNews() {
         return true;
       });
 
-      for (const item of newItems.slice(0, 1)) {
+      // Feed başına 3 item dene — ilki başarısız olursa sıradaki denensin
+      for (const item of newItems.slice(0, 3)) {
         const url = item.link || item.guid;
         const { title: checkTitle } = buildItemMeta(item, feed);
         if (isTitleDuplicate(checkTitle)) continue;
