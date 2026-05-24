@@ -4981,8 +4981,13 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
 
   // ── Mod 1: Belirli bir tweet URL'si verildi ──────────────────────────────
   if (tweetUrl && /x\.com|twitter\.com/i.test(tweetUrl)) {
-    const statusMsg = await bot.sendMessage(chatId, `⬇️ Tweet videosu indiriliyor...\n${tweetUrl.slice(0, 60)}`).catch(() => null);
+    const statusMsg = await bot.sendMessage(chatId, `🔍 Tweet bilgisi alınıyor...\n${tweetUrl.slice(0, 60)}`).catch(() => null);
     try {
+      // Önce metadata al (caption için), sonra video indir — indir/gönder arasına gecikme girmesin
+      const tweetMeta = await fetchTweetText(tweetUrl);
+      const tweetCaption = await buildXCaption(tweetMeta?.title || '', tweetMeta?.description || '');
+
+      await bot.editMessageText(`⬇️ Video indiriliyor...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
       const filePath = await downloadTweetVideo(tweetUrl);
       if (filePath) {
         const stat = fs.statSync(filePath);
@@ -4993,13 +4998,10 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
           return;
         }
         await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
-        // Tweet metnini al
-        const tweetMeta = await fetchTweetText(tweetUrl);
-        const tweetCaption = await buildXCaption(tweetMeta?.title || '', tweetMeta?.description || '');
         try {
           await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: tweetCaption, supports_streaming: true });
         } catch (sendErr) {
-          if (sendErr.message?.includes('no video')) {
+          if (sendErr.message?.includes('no video') || sendErr.message?.includes('no document') || sendErr.message?.includes('Bad Request')) {
             await bot.sendDocument(CHANNEL_ID, { source: filePath }, { caption: tweetCaption });
           } else { throw sendErr; }
         }
