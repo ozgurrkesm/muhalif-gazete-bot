@@ -4759,31 +4759,31 @@ async function downloadTweetVideo(tweetUrl) {
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
 
-  // Denenecek yöntemler sırasıyla
+  // Denenecek (api_type, format) kombinasyonları sırasıyla
   const strategies = [
-    // 1. Syndication API (en iyi — auth gerektirmez, bireysel tweetler için)
-    ['--extractor-args', 'twitter:api_type=syndication'],
-    // 2. GraphQL API (bazen daha güncel, yine auth gerekmez)
-    ['--extractor-args', 'twitter:api_type=graphql'],
-    // 3. Düz çekme
-    [],
+    // Syndication API — merge gerektirmeyen en iyi kalite
+    { apiArgs: ['--extractor-args', 'twitter:api_type=syndication'], fmt: 'best[height<=720][ext=mp4]/best[ext=mp4]/best' },
+    // GraphQL API — merge gerektirmeyen
+    { apiArgs: ['--extractor-args', 'twitter:api_type=graphql'],    fmt: 'best[height<=720][ext=mp4]/best[ext=mp4]/best' },
+    // Syndication — her formatı kabul et
+    { apiArgs: ['--extractor-args', 'twitter:api_type=syndication'], fmt: 'best' },
+    // Düz çekme
+    { apiArgs: [],                                                    fmt: 'best[ext=mp4]/best' },
   ];
 
-  for (const extraArgs of strategies) {
-    const filePath = await new Promise((resolve) => {
+  for (const { apiArgs, fmt } of strategies) {
+    const result = await new Promise((resolve) => {
       const cookieArgs = TWITTER_COOKIES_FILE ? ['--cookies', TWITTER_COOKIES_FILE] : [];
       const args = [
         tweetUrl,
         '--no-playlist',
-        '--max-filesize', '48m',
-        '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=480]/best',
-        '--merge-output-format', 'mp4',
+        '--max-filesize', '49m',
+        '-f', fmt,
         '--no-part',
-        '--socket-timeout', '25',
+        '--socket-timeout', '30',
         '--no-check-certificate',
-        '--no-warnings',
         '-o', outputTemplate,
-        ...extraArgs,
+        ...apiArgs,
         ...cookieArgs,
       ];
       let proc;
@@ -4794,19 +4794,39 @@ async function downloadTweetVideo(tweetUrl) {
       proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
       proc.on('close', code => {
         clearTimeout(killTimer);
-        if (code !== 0) { console.log(`⚠️ tweet yt-dlp ${JSON.stringify(extraArgs)}: ${stderr.slice(-150)}`); resolve(null); return; }
+        if (code !== 0) {
+          console.log(`⚠️ tweet yt-dlp [${fmt}] hata: ${stderr.slice(-200)}`);
+          resolve(null); return;
+        }
         try {
-          const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
-          if (!files.length) { resolve(null); return; }
-          const fp = path.join(tmpDir, files[0]);
+          const allFiles = fs.readdirSync(tmpDir);
+          // Önce video formatlarına bak
+          const videoFiles = allFiles.filter(f => /\.(mp4|webm|mkv|mov|ts|m4v)$/i.test(f));
+          const target = videoFiles[0] || allFiles.filter(f => !/\.(jpg|jpeg|png|gif|webp|json)$/i.test(f))[0];
+          if (!target) { resolve(null); return; }
+          const fp = path.join(tmpDir, target);
           const stat = fs.statSync(fp);
-          // 50KB'dan küçükse video değil (resim/boş dosya)
-          if (stat.size < 50 * 1024) { console.log(`⚠️ tweet dosya çok küçük: ${stat.size} bytes`); resolve(null); return; }
+          if (stat.size < 100 * 1024) {
+            console.log(`⚠️ tweet dosya çok küçük (${stat.size}B), muhtemelen video değil`);
+            resolve(null); return;
+          }
+          // MP4 magic byte kontrolü: ftyp kutusu (4 byte boyut + "ftyp" veya başı 0x00)
+          const buf = Buffer.alloc(12);
+          const fd = fs.openSync(fp, 'r');
+          fs.readSync(fd, buf, 0, 12, 0);
+          fs.closeSync(fd);
+          const magic = buf.slice(4, 8).toString('ascii');
+          const isVideo = ['ftyp', 'moov', 'mdat', 'free', 'wide'].includes(magic) ||
+                          buf[0] === 0x1a && buf[1] === 0x45; // WebM/MKV EBML
+          if (!isVideo) {
+            console.log(`⚠️ tweet dosya video değil — magic: ${JSON.stringify(magic)}, hex: ${buf.slice(0,8).toString('hex')}`);
+            resolve(null); return;
+          }
           resolve(fp);
-        } catch { resolve(null); }
+        } catch (e) { console.log('⚠️ tweet dosya kontrol hatası:', e.message); resolve(null); }
       });
     });
-    if (filePath) return filePath;
+    if (result) return result;
   }
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   return null;
