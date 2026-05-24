@@ -5020,8 +5020,37 @@ async function sendTweetVideoToChannel(filePath, caption) {
   throw new Error(`Video gönderilemedi — sendVideo: "${videoErr}" | sendDocument: "${docErr}"`);
 }
 
-// ─── Tweet metadata al (yt-dlp --dump-json) ──────────────────────────────────
+// ─── Tweet metadata al (fxtwitter API + yt-dlp fallback) ────────────────────
 async function fetchTweetText(tweetUrl) {
+  // ── Yöntem 1: fxtwitter.com API (cookie gerektirmez) ─────────────────────
+  try {
+    const tweetIdMatch = tweetUrl.match(//status/(d+)/);
+    const usernameMatch = tweetUrl.match(/(?:x|twitter).com/([^/]+)/status/);
+    if (tweetIdMatch && usernameMatch) {
+      const tweetId = tweetIdMatch[1];
+      const username = usernameMatch[1];
+      const apiUrl = `https://api.fxtwitter.com/${username}/status/${tweetId}`;
+      const res = await fetch(apiUrl, {
+        headers: { 'User-Agent': 'TelegramBot/1.0' },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const tweet = data?.tweet;
+        if (tweet) {
+          const text = (tweet.text || tweet.full_text || '').replace(/https?://t.co/S+/g, '').trim();
+          const authorName = tweet.author?.name || tweet.author?.screen_name || '';
+          const title = authorName ? `${authorName}: ${text}` : text;
+          console.log(`✅ fxtwitter API tweet metni alındı (${text.length} karakter)`);
+          return { title: title.slice(0, 500), description: text.slice(0, 1000) };
+        }
+      }
+    }
+  } catch (e) {
+    console.log(`⚠️ fxtwitter API hatası: ${e.message?.slice(0, 80)}`);
+  }
+
+  // ── Yöntem 2: yt-dlp --dump-json (TWITTER_COOKIES gerektirir) ───────────
   if (!TWITTER_COOKIES_FILE) return null;
   return new Promise((resolve) => {
     const args = [
