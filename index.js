@@ -4753,26 +4753,44 @@ const TWITTER_COOKIES_FILE = (() => {
   }
 })();
 
-// ─── Tek tweet URL'sinden video indir (yt-dlp syndication API) ───────────────
+// ─── ffprobe ile video stream doğrulama ──────────────────────────────────────
+function hasVideoStream(filePath) {
+  try {
+    const result = spawnSync('ffprobe', [
+      '-v', 'quiet',
+      '-print_format', 'json',
+      '-show_streams',
+      filePath,
+    ], { timeout: 15000, encoding: 'utf8' });
+    if (result.status !== 0) return false;
+    const data = JSON.parse(result.stdout || '{}');
+    const streams = data.streams || [];
+    const hasVideo = streams.some(s => s.codec_type === 'video' && (s.nb_frames === undefined || parseInt(s.nb_frames) > 0));
+    if (!hasVideo) console.log(`⚠️ ffprobe: video stream yok — streams: ${JSON.stringify(streams.map(s => s.codec_type))}`);
+    return hasVideo;
+  } catch (e) {
+    console.log('⚠️ ffprobe kontrol hatası:', e.message);
+    return false;
+  }
+}
+
+// ─── Tek tweet URL'sinden video indir ────────────────────────────────────────
 async function downloadTweetVideo(tweetUrl) {
   const tmpDir = path.join(os.tmpdir(), `tweet_${Date.now()}`);
   try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
   const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
 
-  // Denenecek (api_type, format) kombinasyonları sırasıyla
   const strategies = [
-    // Syndication API — merge gerektirmeyen en iyi kalite
     { apiArgs: ['--extractor-args', 'twitter:api_type=syndication'], fmt: 'best[height<=720][ext=mp4]/best[ext=mp4]/best' },
-    // GraphQL API — merge gerektirmeyen
     { apiArgs: ['--extractor-args', 'twitter:api_type=graphql'],    fmt: 'best[height<=720][ext=mp4]/best[ext=mp4]/best' },
-    // Syndication — her formatı kabul et
-    { apiArgs: ['--extractor-args', 'twitter:api_type=syndication'], fmt: 'best' },
-    // Düz çekme
     { apiArgs: [],                                                    fmt: 'best[ext=mp4]/best' },
   ];
 
   for (const { apiArgs, fmt } of strategies) {
-    const result = await new Promise((resolve) => {
+    // Her denemeden önce dizini temizle
+    try { fs.readdirSync(tmpDir).forEach(f => fs.unlinkSync(path.join(tmpDir, f))); } catch {}
+
+    const filePath = await new Promise((resolve) => {
       const cookieArgs = TWITTER_COOKIES_FILE ? ['--cookies', TWITTER_COOKIES_FILE] : [];
       const args = [
         tweetUrl,
@@ -4795,39 +4813,31 @@ async function downloadTweetVideo(tweetUrl) {
       proc.on('close', code => {
         clearTimeout(killTimer);
         if (code !== 0) {
-          console.log(`⚠️ tweet yt-dlp [${fmt}] hata: ${stderr.slice(-200)}`);
+          console.log(`⚠️ yt-dlp [${fmt}] hata: ${stderr.slice(-250)}`);
           resolve(null); return;
         }
         try {
-          const allFiles = fs.readdirSync(tmpDir);
-          // Önce video formatlarına bak
-          const videoFiles = allFiles.filter(f => /\.(mp4|webm|mkv|mov|ts|m4v)$/i.test(f));
-          const target = videoFiles[0] || allFiles.filter(f => !/\.(jpg|jpeg|png|gif|webp|json)$/i.test(f))[0];
-          if (!target) { resolve(null); return; }
-          const fp = path.join(tmpDir, target);
-          const stat = fs.statSync(fp);
-          if (stat.size < 100 * 1024) {
-            console.log(`⚠️ tweet dosya çok küçük (${stat.size}B), muhtemelen video değil`);
-            resolve(null); return;
-          }
-          // MP4 magic byte kontrolü: ftyp kutusu (4 byte boyut + "ftyp" veya başı 0x00)
-          const buf = Buffer.alloc(12);
-          const fd = fs.openSync(fp, 'r');
-          fs.readSync(fd, buf, 0, 12, 0);
-          fs.closeSync(fd);
-          const magic = buf.slice(4, 8).toString('ascii');
-          const isVideo = ['ftyp', 'moov', 'mdat', 'free', 'wide'].includes(magic) ||
-                          buf[0] === 0x1a && buf[1] === 0x45; // WebM/MKV EBML
-          if (!isVideo) {
-            console.log(`⚠️ tweet dosya video değil — magic: ${JSON.stringify(magic)}, hex: ${buf.slice(0,8).toString('hex')}`);
-            resolve(null); return;
-          }
+          const videoFiles = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov|ts|m4v)$/i.test(f));
+          if (!videoFiles.length) { resolve(null); return; }
+          const fp = path.join(tmpDir, videoFiles[0]);
+          const { size } = fs.statSync(fp);
+          if (size < 100 * 1024) { console.log(`⚠️ dosya çok küçük: ${size}B`); resolve(null); return; }
           resolve(fp);
-        } catch (e) { console.log('⚠️ tweet dosya kontrol hatası:', e.message); resolve(null); }
+        } catch { resolve(null); }
       });
     });
-    if (result) return result;
+
+    if (!filePath) continue;
+
+    // ffprobe ile gerçek video stream var mı kontrol et
+    if (!hasVideoStream(filePath)) {
+      console.log(`⚠️ [${fmt}] indirilen dosyada video stream yok, sonraki strateji deneniyor`);
+      continue;
+    }
+
+    return filePath;
   }
+
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   return null;
 }
