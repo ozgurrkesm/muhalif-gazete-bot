@@ -4896,41 +4896,42 @@ async function fetchXAccountVideos(username) {
   });
 }
 
-// ─── Tweet video gönder: uzantıyı .mp4 yap, MIME tipini sabitle ──────────────
-// node-telegram-bot-api form-data kütüphanesi .ts/.webm/.mkv için yanlış MIME
-// tipi atıyor → Telegram "no document in the request" hatası veriyor.
-// Çözüm: dosyayı .mp4 olarak yeniden adlandır, contentType açıkça belirt.
+// ─── Tweet video gönder: Buffer ile gönder, MIME tipini açıkça belirt ─────────
+// { source: filePath } ile oluşturulan ReadStream bazen içeriksiz gönderiliyor.
+// Çözüm: dosyayı Buffer olarak oku, filename+contentType dosya objesi içinde ver.
 async function sendTweetVideoToChannel(filePath, caption) {
-  // 1. Uzantıyı .mp4 yap
-  let sendPath = filePath;
-  if (!filePath.toLowerCase().endsWith('.mp4')) {
-    const mp4Path = filePath.replace(/\.[^.]+$/, '.mp4');
-    try { fs.renameSync(filePath, mp4Path); sendPath = mp4Path; } catch {}
+  // 1. Dosyanın var olduğunu ve okunabilir olduğunu doğrula
+  let videoBuffer;
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size === 0) {
+      console.error('❌ sendTweetVideoToChannel: dosya 0 byte, atlanıyor');
+      return false;
+    }
+    console.log(`📤 sendTweetVideoToChannel: ${filePath} (${Math.round(stat.size / 1024 / 1024)}MB)`);
+    videoBuffer = fs.readFileSync(filePath);
+  } catch (e) {
+    console.error(`❌ sendTweetVideoToChannel: dosya okunamadı: ${e.message}`);
+    return false;
   }
 
-  const fileOptions = { filename: 'video.mp4', contentType: 'video/mp4' };
+  // 2. filename ve contentType dosya objesi içinde — 4. parametre DEĞİL
+  const safeCaption = (caption || '').slice(0, 1024);
+  const fileObj = { source: videoBuffer, filename: 'video.mp4', contentType: 'video/mp4' };
 
-  // 2. sendVideo dene
+  // 3. sendVideo dene
   try {
-    await bot.sendVideo(
-      CHANNEL_ID,
-      { source: sendPath },
-      { caption, supports_streaming: true },
-      fileOptions
-    );
+    await bot.sendVideo(CHANNEL_ID, fileObj, { caption: safeCaption, supports_streaming: true });
+    console.log('✅ sendTweetVideoToChannel: sendVideo başarılı');
     return true;
   } catch (videoErr) {
-    console.log(`⚠️ sendVideo başarısız (${videoErr.message?.slice(0, 60)}), sendDocument deneniyor...`);
+    console.log(`⚠️ sendVideo başarısız: ${videoErr.message?.slice(0, 80)}`);
   }
 
-  // 3. sendDocument ile dene
+  // 4. sendDocument ile dene
   try {
-    await bot.sendDocument(
-      CHANNEL_ID,
-      { source: sendPath },
-      { caption },
-      fileOptions
-    );
+    await bot.sendDocument(CHANNEL_ID, fileObj, { caption: safeCaption });
+    console.log('✅ sendTweetVideoToChannel: sendDocument başarılı');
     return true;
   } catch (docErr) {
     console.error(`❌ sendDocument da başarısız: ${docErr.message?.slice(0, 100)}`);
