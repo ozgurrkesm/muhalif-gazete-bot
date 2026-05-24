@@ -3745,7 +3745,8 @@ function adminPanelText() {
     `📅 Haber Yaşı: *Son ${settings.maxAgeHours || 24} saat*\n` +
     `📊 Yayınlanan: *${publishedUrls.size}* haber\n` +
     `👥 Kullanıcı: *${Object.keys(users).length}*\n` +
-    `🔑 VIP Kelimeler: *${(settings.vipKeywords||[]).length > 0 ? settings.vipKeywords.join(", ") : "Yok"}*`
+    `🔑 VIP Kelimeler: *${(settings.vipKeywords||[]).length > 0 ? settings.vipKeywords.join(", ") : "Yok"}*\n` +
+    `📬 Gelen Kutusu: *${inboxMessages.size} kullanıcı*`
   );
 }
 
@@ -3788,6 +3789,7 @@ function adminPanelKeyboard() {
         { text: '🔑 VIP Kelimeler', callback_data: 'admin_vip_keywords' },
       ],
       [
+        { text: '📬 Gelen Kutusu', callback_data: 'admin_inbox' },
         { text: '🗑 Haber Kaldır', callback_data: 'admin_delete_msg' },
       ],
     ],
@@ -4520,6 +4522,43 @@ bot.on('callback_query', async (query) => {
       break;
     }
 
+
+
+    case 'admin_inbox': {
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      if (inboxMessages.size === 0) {
+        await bot.editMessageText(
+          '📬 *Gelen Kutusu*\n\nHenüz hiç kullanıcı mesajı yok.',
+          { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_back' }]] } }
+        ).catch(() => {});
+        break;
+      }
+      const users = [...inboxMessages.entries()];
+      const kbRows = users.map(([uid, info]) => {
+        const last = info.msgs[info.msgs.length - 1];
+        const label = (last.type === 'photo' ? '🖼 ' : '💬 ') + info.userName + ' — ' + last.sentAt;
+        return [{ text: label, callback_data: 'admin_inbox_u_' + uid }];
+      });
+      kbRows.push([{ text: '🗑 Kutuyu Temizle', callback_data: 'admin_inbox_clear' }]);
+      kbRows.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
+      await bot.editMessageText(
+        '📬 *Gelen Kutusu*\n\n' + users.length + ' kullanıcıdan mesaj var. Detay için tıkla:',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: kbRows } }
+      ).catch(() => {});
+      break;
+    }
+
+    case 'admin_inbox_clear': {
+      inboxMessages.clear();
+      await bot.answerCallbackQuery(query.id, { text: '🗑 Gelen kutusu temizlendi' }).catch(() => {});
+      await bot.editMessageText(
+        '📬 *Gelen Kutusu*\n\nKutu temizlendi.',
+        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_back' }]] } }
+      ).catch(() => {});
+      break;
+    }
 
     case 'admin_vip_keywords': {
       await bot.answerCallbackQuery(query.id).catch(() => {});
@@ -5930,6 +5969,7 @@ http.createServer((req, res) => {
 // ─── Yorum Sistemi ────────────────────────────────────────────────────────────
 // Kullanıcılar bota mesaj gönderir → admin'e iletilir → admin yanıtlayabilir
 const pendingReplies = new Map(); // adminMsgId → { userId, userName }
+const inboxMessages = new Map(); // userId → { userName, msgs: [{text,sentAt,source,type}] }
 const pendingAdminAction = new Map(); // adminChatId → { action: 'post_text'|'post_photo'|'delete_msg' }
 
 bot.on('message', async (msg) => {
@@ -6102,6 +6142,12 @@ bot.on('message', async (msg) => {
     }
     const lastMsgText = msg.text ? msg.text.slice(0, 200) : (msg.caption ? '[Fotoğraf] ' + msg.caption.slice(0, 200) : '[Fotoğraf]');
     pendingReplies.set(forwarded.message_id, { userId: chatId, userName, lastMsg: lastMsgText, sentAt: nowTR, source: msgSource });
+    // Inbox'a kaydet
+    if (!inboxMessages.has(chatId)) inboxMessages.set(chatId, { userName, msgs: [] });
+    const _inbox = inboxMessages.get(chatId);
+    _inbox.userName = userName;
+    _inbox.msgs.push({ text: lastMsgText, sentAt: nowTR, source: msgSource, type: msg.photo ? 'photo' : 'text' });
+    if (_inbox.msgs.length > 50) _inbox.msgs = _inbox.msgs.slice(-50); // son 50 mesaj
     await bot.sendMessage(msg.chat.id, '✅ Yorumunuz editöre iletildi, teşekkürler!');
   } catch (e) {
     console.error('Yorum iletilemedi:', e.message);
@@ -6122,6 +6168,34 @@ bot.on('callback_query', async (query) => {
   const data = query.data;
   const chatId = String(query.message.chat.id);
 
+
+    if (data && data.startsWith('admin_inbox_u_')) {
+      const uid = data.replace('admin_inbox_u_', '');
+      const info = inboxMessages.get(uid);
+      await bot.answerCallbackQuery(query.id).catch(() => {});
+      if (!info) {
+        await bot.editMessageText('⚠️ Bu kullanıcının mesajları bulunamadı.',
+          { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: [[{ text: '◀️ Geri', callback_data: 'admin_inbox' }]] } }
+        ).catch(() => {});
+        return;
+      }
+      let histText = '📬 *' + info.userName + '* (ID: ' + uid + ') — Mesaj Geçmişi\n\n';
+      const shown = info.msgs.slice(-10); // son 10 mesaj
+      for (const m of shown) {
+        const icon = m.type === 'photo' ? '🖼' : '💬';
+        histText += icon + ' ' + m.sentAt + ' | ' + m.source + '\n' + m.text.slice(0, 200) + '\n\n';
+      }
+      if (histText.length > 4000) histText = histText.slice(0, 3990) + '…';
+      const kbU = [
+        [{ text: '↩️ Yanıtla', callback_data: 'reply_user_' + uid }],
+        [{ text: '◀️ Geri', callback_data: 'admin_inbox' }],
+      ];
+      await bot.editMessageText(histText,
+        { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: kbU } }
+      ).catch(() => {});
+      return;
+    }
     if (data && data.startsWith('admin_vip_del_')) {
       const idx = parseInt(data.replace('admin_vip_del_', ''));
       if (!isNaN(idx) && idx >= 0 && (settings.vipKeywords || []).length > idx) {
