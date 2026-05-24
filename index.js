@@ -170,7 +170,6 @@ function loadSettings() {
     maxAgeHours: 24,
     publishStartHour: 9,
     publishEndHour: 2,
-    vipKeywords: [],
   };
 }
 
@@ -183,7 +182,6 @@ let settings = loadSettings();
 if (settings.maxAgeHours === undefined) settings.maxAgeHours = 24;
 if (settings.publishStartHour === undefined) settings.publishStartHour = 9;
 if (settings.publishEndHour === undefined) settings.publishEndHour = 2;
-if (!settings.vipKeywords) settings.vipKeywords = [];
 
 // ─── Kullanıcı Yönetimi ───────────────────────────────────────────────────────
 
@@ -3745,7 +3743,6 @@ function adminPanelText() {
     `📅 Haber Yaşı: *Son ${settings.maxAgeHours || 24} saat*\n` +
     `📊 Yayınlanan: *${publishedUrls.size}* haber\n` +
     `👥 Kullanıcı: *${Object.keys(users).length}*\n` +
-    `🔑 VIP Kelimeler: *${(settings.vipKeywords||[]).length > 0 ? settings.vipKeywords.join(", ") : "Yok"}*\n` +
     `📬 Gelen Kutusu: *${inboxMessages.size} kullanıcı*`
   );
 }
@@ -3784,9 +3781,6 @@ function adminPanelKeyboard() {
       [
         { text: '🐦 X Video', callback_data: 'admin_xvideo' },
         { text: '🐦📰 X Haber', callback_data: 'admin_xhaber' },
-      ],
-      [
-        { text: '🔑 VIP Kelimeler', callback_data: 'admin_vip_keywords' },
       ],
       [
         { text: '📬 Gelen Kutusu', callback_data: 'admin_inbox' },
@@ -4560,29 +4554,6 @@ bot.on('callback_query', async (query) => {
       break;
     }
 
-    case 'admin_vip_keywords': {
-      await bot.answerCallbackQuery(query.id).catch(() => {});
-      const kws = settings.vipKeywords || [];
-      const kwList = kws.length > 0 ? kws.map(k => '• ' + k).join('\n') : 'Henüz kelime yok.';
-      const text = '🔑 *VIP Kelimeler*\n\nBu kelimeler RSS haberlerinde bulununca haber anında görselle yayınlanır.\n\n' + kwList + '\n\n➕ Eklemek için butona tıkla. ❌ Silmek için kelimeye tıkla.';
-      const kbRows = [];
-      for (let i = 0; i < kws.length; i += 2) {
-        const row = [{ text: '❌ ' + kws[i], callback_data: 'admin_vip_del_' + i }];
-        if (kws[i + 1] !== undefined) row.push({ text: '❌ ' + kws[i + 1], callback_data: 'admin_vip_del_' + (i + 1) });
-        kbRows.push(row);
-      }
-      kbRows.push([{ text: '➕ Kelime Ekle', callback_data: 'admin_vip_add' }]);
-      kbRows.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
-      await bot.editMessageText(text, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: kbRows } }).catch(() => {});
-      break;
-    }
-
-    case 'admin_vip_add': {
-      pendingAdminAction.set(chatId, { action: 'vip_add' });
-      await bot.answerCallbackQuery(query.id).catch(() => {});
-      await bot.sendMessage(chatId, '🔑 *VIP Kelime Ekle*\n\nİzlemek istediğiniz kelimeyi yazın (örn: Erdoğan, CHP, BDDK):\n_(İptal için /admin yazın)_', { parse_mode: 'Markdown' });
-      break;
-    }
 
     case 'admin_delete_msg': {
       pendingAdminAction.set(chatId, { action: 'delete_msg' });
@@ -5288,74 +5259,6 @@ async function fetchXAccountTweets(username) {
   });
 }
 
-// ─── VIP Kelime Haber Tarayıcısı ─────────────────────────────────────────────
-const VIP_SCAN_INTERVAL_MS = 5 * 60 * 1000; // 5 dakika
-let vipScanInterval = null;
-const vipPublishedUrls = new Set();
-
-async function checkVipKeywordNews() {
-  const kws = settings.vipKeywords || [];
-  if (kws.length === 0) return;
-  if (settings.paused) return;
-  if (!isWithinPublishHours()) return;
-
-  console.log('🔑 VIP tarama: ' + kws.join(', '));
-  for (const feed of RSS_FEEDS) {
-    try {
-      const items = await fetchFeed(feed);
-      for (const item of items.slice(0, 20)) {
-        const url = item.link || item.guid;
-        if (!url || vipPublishedUrls.has(url) || publishedUrls.has(url)) continue;
-        const rawTitle = cleanTitle(item.title || '');
-        const rawDesc = item.contentSnippet || item.summary || '';
-        const combined = (rawTitle + ' ' + rawDesc).toLowerCase();
-        const matchedKw = kws.find(kw => combined.includes(kw.toLowerCase()));
-        if (!matchedKw) continue;
-        if (BLOCKED_TITLE_PATTERNS.some(p => p.test(rawTitle))) continue;
-        if (isTitleDuplicate(rawTitle, { add: false })) continue;
-
-        console.log('🔑 VIP eşleşme ("' + matchedKw + '"): ' + rawTitle.slice(0, 60));
-        vipPublishedUrls.add(url);
-        try {
-          let realUrl = url;
-          if (url.includes('news.google.com')) realUrl = (await resolveGoogleNewsUrl(url)) || url;
-          const ogMeta = await fetchOgMeta(realUrl).catch(() => ({}));
-          const bestD = ogMeta.description || rawDesc || '';
-          const aiS = await summarizeNews(rawTitle, bestD, ogMeta.articleBody || null).catch(() => null);
-          let caption = '🔑 *' + matchedKw.toUpperCase() + '*\n\n' + rawTitle;
-          if (aiS && aiS.trim().length > 40) caption += '\n\n' + cleanArrows(stripLinks(stripSourceDate(aiS)));
-          if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
-          const imgUrl = ogMeta.image || (extractMedia(item) || {}).url || '';
-          if (imgUrl) {
-            await bot.sendPhoto(CHANNEL_ID, imgUrl, { caption, parse_mode: 'Markdown' }).catch(async () => {
-              await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-            });
-          } else {
-            await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: false });
-          }
-          publishedUrls.add(url);
-          persistPublishedUrls();
-          isTitleDuplicate(rawTitle);
-          console.log('✅ VIP haber yayınlandı: ' + rawTitle.slice(0, 60));
-          await new Promise(r => setTimeout(r, 3000));
-        } catch (e) {
-          console.error('❌ VIP yayın hatası: ' + (e.message || '').slice(0, 80));
-        }
-      }
-    } catch (e) {
-      console.error('❌ VIP feed hatası (' + feed.label + '): ' + (e.message || '').slice(0, 60));
-    }
-  }
-}
-
-function startVipScanner() {
-  if (vipScanInterval) clearInterval(vipScanInterval);
-  vipScanInterval = setInterval(() => {
-    checkVipKeywordNews().catch(e => console.error('VIP tarama hatası:', e.message));
-  }, VIP_SCAN_INTERVAL_MS);
-  console.log('🔑 VIP kelime tarayıcısı aktif (her 5 dakikada bir)');
-}
-
 // ─── Otomatik X Video Tarama ─────────────────────────────────────────────────
 const X_VIDEO_SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 dakika
 let xVideoScanInterval = null;
@@ -5915,7 +5818,6 @@ function startBot() {
   startBreakingNewsChecker();
   checkBreakingNews();
   startXVideoScanner();
-  startVipScanner();
   // İlk taramayı 2 dakika sonra yap (bot tamamen başladıktan sonra)
   if (TWITTER_COOKIES_FILE) {
     setTimeout(() => autoScanXVideos().catch(e => console.error('X ilk tarama hatası:', e.message)), 2 * 60 * 1000);
@@ -6017,22 +5919,6 @@ bot.on('message', async (msg) => {
           pendingAdminAction.delete(chatId);
         } else {
           await bot.sendMessage(chatId, '⚠️ Geçerli bir tweet URL\'si girin.\nÖrnek: `https://x.com/gazetesozcu/status/123456789`', { parse_mode: 'Markdown' });
-        }
-        return;
-      }
-
-      // VIP kelime ekleme
-      if (action === 'vip_add' && msg.text) {
-        pendingAdminAction.delete(chatId);
-        const kw = msg.text.trim().toLowerCase();
-        if (kw.length < 2) { await bot.sendMessage(chatId, '⚠️ Kelime çok kısa, en az 2 karakter girin.'); return; }
-        if (!settings.vipKeywords) settings.vipKeywords = [];
-        if (settings.vipKeywords.includes(kw)) {
-          await bot.sendMessage(chatId, '⚠️ "' + kw + '" zaten VIP listesinde.');
-        } else {
-          settings.vipKeywords.push(kw);
-          saveSettings();
-          await bot.sendMessage(chatId, '✅ *"' + kw + '"* VIP listeye eklendi!\n\nBu kelimeyi içeren haberler görselle yayınlanacak. Toplam: ' + settings.vipKeywords.length + ' kelime', { parse_mode: 'Markdown' });
         }
         return;
       }
@@ -6163,7 +6049,7 @@ bot.onText(/\/yorum/, (msg) => {
   );
 });
 
-// Admin "Yanıtla" butonuna basarsa — sadece reply_user_, admin_vip_del_, admin_inbox_u_
+// Admin "Yanıtla" butonuna basarsa — sadece reply_user_, admin_inbox_u_
 bot.on('callback_query', async (query) => {
   const data = query.data;
   if (!data) return;
@@ -6200,31 +6086,6 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  // ── VIP keyword silme ─────────────────────────────────────────────────────
-  if (data.startsWith('admin_vip_del_')) {
-    if (!isAdmin(chatId)) return;
-    const idx = parseInt(data.replace('admin_vip_del_', ''));
-    if (!isNaN(idx) && idx >= 0 && (settings.vipKeywords || []).length > idx) {
-      const removed = settings.vipKeywords.splice(idx, 1)[0];
-      saveSettings();
-      await bot.answerCallbackQuery(query.id, { text: '"' + removed + '" silindi' }).catch(() => {});
-      const kws2 = settings.vipKeywords;
-      const kwList2 = kws2.length > 0 ? kws2.map(k => '• ' + k).join('\n') : 'Henüz kelime yok.';
-      const text2 = '🔑 *VIP Kelimeler*\n\n' + kwList2 + '\n\n➕ Eklemek için butona tıkla. ❌ Silmek için kelimeye tıkla.';
-      const kbRows2 = [];
-      for (let i = 0; i < kws2.length; i += 2) {
-        const row = [{ text: '❌ ' + kws2[i], callback_data: 'admin_vip_del_' + i }];
-        if (kws2[i+1] !== undefined) row.push({ text: '❌ ' + kws2[i+1], callback_data: 'admin_vip_del_' + (i+1) });
-        kbRows2.push(row);
-      }
-      kbRows2.push([{ text: '➕ Kelime Ekle', callback_data: 'admin_vip_add' }]);
-      kbRows2.push([{ text: '◀️ Geri', callback_data: 'admin_back' }]);
-      await bot.editMessageText(text2, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown', reply_markup: { inline_keyboard: kbRows2 } }).catch(() => {});
-    } else {
-      await bot.answerCallbackQuery(query.id).catch(() => {});
-    }
-    return;
-  }
 
   // ── Kullanıcıya yanıt (reply_user_) ───────────────────────────────────────
   if (!data.startsWith('reply_user_')) return;
