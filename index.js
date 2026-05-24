@@ -5024,8 +5024,8 @@ async function sendTweetVideoToChannel(filePath, caption) {
 async function fetchTweetText(tweetUrl) {
   // ── Yöntem 1: fxtwitter.com API (cookie gerektirmez) ─────────────────────
   try {
-    const tweetIdMatch = tweetUrl.match(//status/(d+)/);
-    const usernameMatch = tweetUrl.match(/(?:x|twitter).com/([^/]+)/status/);
+    const tweetIdMatch = tweetUrl.match(/\/status\/(\d+)/);
+    const usernameMatch = tweetUrl.match(/(?:x|twitter)\.com\/([^/]+)\/status/);
     if (tweetIdMatch && usernameMatch) {
       const tweetId = tweetIdMatch[1];
       const username = usernameMatch[1];
@@ -5038,7 +5038,7 @@ async function fetchTweetText(tweetUrl) {
         const data = await res.json();
         const tweet = data?.tweet;
         if (tweet) {
-          const text = (tweet.text || tweet.full_text || '').replace(/https?://t.co/S+/g, '').trim();
+          const text = (tweet.text || tweet.full_text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
           const authorName = tweet.author?.name || tweet.author?.screen_name || '';
           const title = authorName ? `${authorName}: ${text}` : text;
           console.log(`✅ fxtwitter API tweet metni alındı (${text.length} karakter)`);
@@ -5077,7 +5077,6 @@ async function fetchTweetText(tweetUrl) {
     });
   });
 }
-
 // ─── X caption oluştur: başlık + AI özet ─────────────────────────────────────
 async function buildXCaption(title, description) {
   const cleanedTitle = cleanTitle(title.replace(/https?:\/\/\S+/g, '').trim()).slice(0, 200);
