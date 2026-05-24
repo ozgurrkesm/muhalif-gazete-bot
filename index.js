@@ -4764,6 +4764,57 @@ const TWITTER_COOKIES_FILE = (() => {
   }
 })();
 
+// ─── ffmpeg ile video'yu gerçek MP4 container'a dönüştür ─────────────────────
+// yt-dlp bazen .ts / .webm / .mkv indiriyor — bu container'lar Telegram'da
+// "no document" / "wrong type" hatasına yol açıyor. ffmpeg ile remux yapıyoruz.
+async function convertToMp4(inputPath) {
+  const outputPath = inputPath.replace(/\.[^.]+$/, '') + '_tg.mp4';
+  return new Promise((resolve) => {
+    // Önce -c:v copy ile hızlı remux dene
+    const proc = spawn('ffmpeg', [
+      '-i', inputPath,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-movflags', '+faststart',
+      '-y', outputPath,
+    ], { stdio: 'pipe' });
+    let stderr = '';
+    proc.stderr?.on('data', d => { stderr += d.toString(); });
+    const kill = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(null); }, 90000);
+    proc.on('error', e => { clearTimeout(kill); console.log(`⚠️ ffmpeg spawn: ${e.message}`); resolve(null); });
+    proc.on('close', code => {
+      clearTimeout(kill);
+      if (code === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+        console.log(`✅ ffmpeg remux başarılı → ${path.basename(outputPath)}`);
+        resolve(outputPath);
+      } else {
+        console.log(`⚠️ ffmpeg remux başarısız (${code}), re-encode deneniyor...`);
+        // copy başarısız → re-encode ile dene
+        const proc2 = spawn('ffmpeg', [
+          '-i', inputPath,
+          '-c:v', 'libx264', '-preset', 'fast', '-crf', '23',
+          '-c:a', 'aac',
+          '-movflags', '+faststart',
+          '-y', outputPath,
+        ], { stdio: 'pipe' });
+        proc2.stderr?.on('data', () => {});
+        const kill2 = setTimeout(() => { try { proc2.kill('SIGKILL'); } catch {} resolve(null); }, 180000);
+        proc2.on('error', e => { clearTimeout(kill2); console.log(`⚠️ ffmpeg re-encode spawn: ${e.message}`); resolve(null); });
+        proc2.on('close', code2 => {
+          clearTimeout(kill2);
+          if (code2 === 0 && fs.existsSync(outputPath) && fs.statSync(outputPath).size > 1000) {
+            console.log(`✅ ffmpeg re-encode başarılı → ${path.basename(outputPath)}`);
+            resolve(outputPath);
+          } else {
+            console.log(`⚠️ ffmpeg re-encode de başarısız (${code2})`);
+            resolve(null);
+          }
+        });
+      }
+    });
+  });
+}
+
 // ─── ffprobe ile video stream doğrulama ──────────────────────────────────────
 function hasVideoStream(filePath) {
   try {
@@ -4900,21 +4951,38 @@ async function fetchXAccountVideos(username) {
 // node-telegram-bot-api'nin dosya işleme mekanizmasını tamamen atlıyoruz.
 // Bu yaklaşımda MIME tipi, dosya adı ve içerik üzerinde tam kontrol var.
 async function sendTweetVideoToChannel(filePath, caption) {
-  // 1. Dosyayı oku ve doğrula
-  let videoBuffer;
+  // 1. Dosyayı doğrula
   try {
     const stat = fs.statSync(filePath);
     if (stat.size === 0) throw new Error('İndirilen dosya 0 byte — video içeriği alınamadı');
-    console.log(`📤 sendTweetVideoToChannel: ${filePath} (${Math.round(stat.size / 1024 / 1024)}MB)`);
-    videoBuffer = fs.readFileSync(filePath);
+    console.log(`📤 sendTweetVideoToChannel giriş: ${filePath} (${Math.round(stat.size / 1024 / 1024)}MB)`);
   } catch (e) {
     throw new Error(`Video dosyası okunamadı: ${e.message}`);
+  }
+
+  // 2. ffmpeg ile gerçek MP4'e dönüştür (yt-dlp .ts/.webm/.mkv indirebilir)
+  let sendPath = filePath;
+  const converted = await convertToMp4(filePath);
+  if (converted) {
+    sendPath = converted;
+    console.log(`✅ ffmpeg dönüşüm tamamlandı: ${sendPath}`);
+  } else {
+    console.log('⚠️ ffmpeg dönüşüm yapılamadı, orijinal dosya deneniyor...');
+  }
+
+  // 3. Dosyayı buffer olarak oku
+  let videoBuffer;
+  try {
+    videoBuffer = fs.readFileSync(sendPath);
+    console.log(`📦 Buffer boyutu: ${Math.round(videoBuffer.length / 1024 / 1024)}MB`);
+  } catch (e) {
+    throw new Error(`Buffer okuma hatası: ${e.message}`);
   }
 
   const safeCaption = (caption || '').slice(0, 1024);
   const apiBase = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-  // 2. sendVideo dene — fetch + FormData + Blob (MIME tipi kesin doğru)
+  // 4. sendVideo — fetch + FormData + Blob
   let videoErr = '';
   try {
     const form = new FormData();
@@ -4924,7 +4992,7 @@ async function sendTweetVideoToChannel(filePath, caption) {
     form.append('video', new Blob([videoBuffer], { type: 'video/mp4' }), 'video.mp4');
     const res = await fetch(`${apiBase}/sendVideo`, { method: 'POST', body: form });
     const json = await res.json();
-    if (json.ok) { console.log('✅ sendTweetVideoToChannel: sendVideo başarılı'); return; }
+    if (json.ok) { console.log('✅ sendVideo başarılı'); return; }
     videoErr = json.description || 'bilinmeyen hata';
     console.log(`⚠️ sendVideo başarısız: ${videoErr}`);
   } catch (e) {
@@ -4932,7 +5000,7 @@ async function sendTweetVideoToChannel(filePath, caption) {
     console.log(`⚠️ sendVideo exception: ${videoErr}`);
   }
 
-  // 3. sendDocument fallback
+  // 5. sendDocument fallback
   let docErr = '';
   try {
     const form2 = new FormData();
@@ -4941,7 +5009,7 @@ async function sendTweetVideoToChannel(filePath, caption) {
     form2.append('document', new Blob([videoBuffer], { type: 'video/mp4' }), 'video.mp4');
     const res2 = await fetch(`${apiBase}/sendDocument`, { method: 'POST', body: form2 });
     const json2 = await res2.json();
-    if (json2.ok) { console.log('✅ sendTweetVideoToChannel: sendDocument başarılı'); return; }
+    if (json2.ok) { console.log('✅ sendDocument başarılı'); return; }
     docErr = json2.description || 'bilinmeyen hata';
     console.log(`⚠️ sendDocument başarısız: ${docErr}`);
   } catch (e) {
