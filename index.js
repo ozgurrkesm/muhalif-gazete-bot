@@ -3572,9 +3572,21 @@ async function checkBreakingNews() {
           const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null);
 
           // ── İçerik kalite filtresi: detaysız / boş haberler atlanıyor ──────
-          const hasRealContent = (bestD.trim().length >= 80) || (ogMeta.articleBody && ogMeta.articleBody.trim().length >= 100);
-          const aiSMeaningful = !!(aiS && aiS.trim().length >= 60);
-          if (!hasRealContent && !aiSMeaningful) {
+          // Açıklama başlığın tekrarı mı? (RSS'ler sık yapıyor: başlık + "Son Dakika")
+          const normalizeForCmp = (s) => s.toLowerCase()
+            .replace(/son dakika|flaş|acil|breaking|\s+/gi, ' ')
+            .replace(/[^a-zğüşöçı0-9 ]/gi, '').trim();
+          const normTitle = normalizeForCmp(title);
+          const normDesc  = normalizeForCmp(bestD);
+          // Açıklama başlığı içeriyorsa veya çok benziyorsa gerçek içerik sayma
+          const descIsRepeat = !normDesc || normDesc.length < 30
+            || normDesc.includes(normTitle.slice(0, Math.min(normTitle.length, 40)))
+            || normTitle.includes(normDesc.slice(0, Math.min(normDesc.length, 40)));
+          const hasRealContent = !descIsRepeat && bestD.trim().length >= 80;
+          const hasArticleBody = !!(ogMeta.articleBody && ogMeta.articleBody.trim().length >= 150);
+          const aiSMeaningful  = !!(aiS && aiS.trim().length >= 80
+            && !normalizeForCmp(aiS).includes(normTitle.slice(0, 40)));
+          if (!hasRealContent && !hasArticleBody && !aiSMeaningful) {
             console.log(`⛔ Son dakika detaysız atlandı: ${title.slice(0, 70)}`);
             breakingPublishedUrls.delete(url);
             continue;
