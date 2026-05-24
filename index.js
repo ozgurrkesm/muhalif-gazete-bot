@@ -5167,6 +5167,86 @@ async function fetchXAccountTweets(username) {
   });
 }
 
+// ─── Otomatik X Video Tarama ─────────────────────────────────────────────────
+const X_VIDEO_SCAN_INTERVAL_MS = 30 * 60 * 1000; // 30 dakika
+let xVideoScanInterval = null;
+
+async function autoScanXVideos() {
+  if (!TWITTER_COOKIES_FILE) return;
+  if (settings.paused) { console.log('⏸ X video tarama atlandı (bot duraklatıldı)'); return; }
+  if (!isWithinPublishHours()) { console.log('🌙 X video tarama atlandı (yayın saati dışı)'); return; }
+
+  console.log('🐦 Otomatik X video taraması başladı...');
+  let sentCount = 0;
+
+  for (const account of X_ACCOUNTS) {
+    try {
+      const entries = await fetchXAccountVideos(account.username);
+      for (const entry of entries.slice(0, 5)) {
+        const postUrl = entry.webpage_url || entry.url;
+        if (!postUrl || publishedUrls.has(postUrl)) continue;
+
+        const rawTitle = (entry.title || entry.description || '').replace(/https?:\/\/\S+/g, '').trim();
+        const title = cleanTitle(rawTitle).slice(0, 200) || `${account.label} videosu`;
+        if (isTitleDuplicate(title)) continue;
+        if (BLOCKED_TITLE_PATTERNS.some(p => p.test(title))) {
+          console.log(`⛔ X video engellendi: ${title.slice(0, 50)}`);
+          continue;
+        }
+
+        console.log(`⬇️ X otomatik: @${account.username} — "${title.slice(0, 50)}..."`);
+        const filePath = await downloadTweetVideo(postUrl);
+        if (!filePath) continue;
+
+        try {
+          const stat = require('fs').statSync(filePath);
+          if (stat.size > 50 * 1024 * 1024) {
+            console.log(`⚠️ Video çok büyük (50MB+), atlanıyor`);
+            try { require('fs').rmSync(require('path').dirname(filePath), { recursive: true, force: true }); } catch {}
+            continue;
+          }
+
+          const tweetMeta = await fetchTweetText(postUrl);
+          const caption = await buildXCaption(tweetMeta?.title || title, tweetMeta?.description || '');
+          await sendTweetVideoToChannel(filePath, caption);
+
+          publishedUrls.add(postUrl);
+          persistPublishedUrls();
+          isTitleDuplicate(title);
+          sentCount++;
+          console.log(`✅ X otomatik yayınlandı: ${title.slice(0, 50)}`);
+        } catch (e) {
+          console.error(`❌ X otomatik gönderim hatası: ${e.message?.slice(0, 100)}`);
+        } finally {
+          try { require('fs').rmSync(require('path').dirname(filePath), { recursive: true, force: true }); } catch {}
+        }
+
+        // Her video arasında 10 sn bekle (Telegram flood koruması)
+        await new Promise(r => setTimeout(r, 10000));
+        if (sentCount >= 2) break; // Her turda en fazla 2 video gönder
+      }
+      if (sentCount >= 2) break;
+    } catch (e) {
+      console.error(`❌ X otomatik tarama @${account.username}: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  if (sentCount === 0) console.log('ℹ️ X otomatik tarama: yeni video bulunamadı');
+  else console.log(`✅ X otomatik tarama tamamlandı: ${sentCount} video yayınlandı`);
+}
+
+function startXVideoScanner() {
+  if (xVideoScanInterval) clearInterval(xVideoScanInterval);
+  if (!TWITTER_COOKIES_FILE) {
+    console.log('⚠️ X otomatik tarama kapalı — TWITTER_COOKIES ayarlanmamış');
+    return;
+  }
+  xVideoScanInterval = setInterval(() => {
+    autoScanXVideos().catch(e => console.error('⚠️ X tarama zamanlayıcı hatası:', e.message));
+  }, X_VIDEO_SCAN_INTERVAL_MS);
+  console.log(`🐦 X otomatik video taraması aktif (her ${X_VIDEO_SCAN_INTERVAL_MS / 60000} dakikada bir)`);
+}
+
 // ─── /xvideo — Tweet URL'sinden veya auto-scan ile X videosu kanala gönder ───
 bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
   if (!isAdmin(msg.chat.id)) return;
@@ -5645,6 +5725,11 @@ function startBot() {
   resetInterval();
   startBreakingNewsChecker();
   checkBreakingNews();
+  startXVideoScanner();
+  // İlk taramayı 2 dakika sonra yap (bot tamamen başladıktan sonra)
+  if (TWITTER_COOKIES_FILE) {
+    setTimeout(() => autoScanXVideos().catch(e => console.error('X ilk tarama hatası:', e.message)), 2 * 60 * 1000);
+  }
   console.log('✅ Bot tamamen hazır');
 }
 
