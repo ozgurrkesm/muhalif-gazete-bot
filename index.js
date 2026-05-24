@@ -1843,16 +1843,25 @@ function itemHasImage(it) {
   return /<img/i.test(content);
 }
 
+function getItemDate(item) {
+  const raw = item.pubDate || item.isoDate || item.published || null;
+  if (!raw) return 0;
+  const t = new Date(raw).getTime();
+  return isNaN(t) ? 0 : t;
+}
+
 function sortByNeededMedia(items, needed) {
+  // Önce tarihe göre sırala (en yeni başta) — eski haberler görseli var diye öne geçemesin
+  const byDate = [...items].sort((a, b) => getItemDate(b) - getItemDate(a));
   if (needed === 'video') {
-    const video = items.filter(itemHasVideo);
-    const image = items.filter(it => !itemHasVideo(it) && itemHasImage(it));
-    const text  = items.filter(it => !itemHasVideo(it) && !itemHasImage(it));
+    const video = byDate.filter(itemHasVideo);
+    const image = byDate.filter(it => !itemHasVideo(it) && itemHasImage(it));
+    const text  = byDate.filter(it => !itemHasVideo(it) && !itemHasImage(it));
     return [...video, ...image, ...text];
   }
-  const image = items.filter(it => itemHasImage(it) && !itemHasVideo(it));
-  const video = items.filter(itemHasVideo);
-  const text  = items.filter(it => !itemHasImage(it) && !itemHasVideo(it));
+  const image = byDate.filter(it => itemHasImage(it) && !itemHasVideo(it));
+  const video = byDate.filter(itemHasVideo);
+  const text  = byDate.filter(it => !itemHasImage(it) && !itemHasVideo(it));
   return [...image, ...video, ...text];
 }
 
@@ -2686,7 +2695,7 @@ async function fetchFeedXml(url, maxRedirects = 5) {
         }
       });
       req.on('error', reject);
-      req.setTimeout(6000, () => { req.destroy(); reject(new Error('timeout')); });
+      req.setTimeout(4000, () => { req.destroy(); reject(new Error('timeout')); });
     });
     if (result.redirect) { currentUrl = result.redirect; continue; }
     return result.xml;
@@ -2999,7 +3008,7 @@ let publishNowStartTime = 0;
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
   // ── Normal haber — medyalı öğe bul (max 10 deneme) ────────────────────────
-  const MAX_TRIES = 10;
+  const MAX_TRIES = 6;
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
   let chosenMedia2 = null;
@@ -3020,7 +3029,7 @@ let publishNowStartTime = 0;
     if (rawCandidateUrl.includes('news.google.com')) {
       candidateUrl = (await Promise.race([
         resolveGoogleNewsUrl(rawCandidateUrl),
-        new Promise((_, rej) => setTimeout(() => rej(new Error('resolveGoogleNews 15s timeout')), 15000))
+        new Promise((_, rej) => setTimeout(() => rej(new Error('resolveGoogleNews 7s timeout')), 7000))
       ]).catch(() => null)) || rawCandidateUrl;
       if (candidateUrl !== rawCandidateUrl) {
         console.log(`🔓 Çözüldü: ${candidateUrl.slice(0, 80)}`);
@@ -3048,7 +3057,7 @@ let publishNowStartTime = 0;
     // OG meta çek (görsel + açıklama) (8s timeout)
     const ogMeta = await Promise.race([
       fetchOgMeta(candidateUrl),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('fetchOgMeta 8s timeout')), 8000))
+      new Promise((_, rej) => setTimeout(() => rej(new Error('fetchOgMeta 5s timeout')), 5000))
     ]).catch(() => ({}));
     if (ogMeta.description && !chosenOgDesc) chosenOgDesc = ogMeta.description;
     if (ogMeta.articleBody && !chosenArticleBody) chosenArticleBody = ogMeta.articleBody;
