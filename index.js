@@ -3685,6 +3685,9 @@ function adminPanelKeyboard() {
       ],
       [
         { text: '🐦 X Video', callback_data: 'admin_xvideo' },
+        { text: '🐦📰 X Haber', callback_data: 'admin_xhaber' },
+      ],
+      [
         { text: '🗑 Haber Kaldır', callback_data: 'admin_delete_msg' },
       ],
     ],
@@ -3707,6 +3710,7 @@ const BOT_COMMANDS = [
   { cmd: '/filtre temizle',     icon: '🧹', desc: 'Tüm filtreleri tek seferde siler' },
   { cmd: '/video <url>',        icon: '🎬', desc: 'Verilen URL\'den video indirir ve kanala gönderir' },
   { cmd: '/xvideo <tweet_url>', icon: '🐦', desc: 'Tweet URL\'sinden video indirir ve kanala gönderir — örn: /xvideo https://x.com/gazetesozcu/status/123' },
+  { cmd: '/xhaber',             icon: '🐦📰', desc: 'X/Twitter hesaplarından son haberleri (video+metin) çekip kanala paylaşır (TWITTER_COOKIES gerektirir)' },
   { cmd: '/myid',               icon: '🪪', desc: 'Kendi Telegram Chat ID\'ini gösterir' },
   { cmd: '/yorum',              icon: '💬', desc: 'Editörlere yorum veya görüş iletir' },
   { cmd: '/dur',                icon: '⏸', desc: 'Otomatik yayını duraklatır (sadece admin)' },
@@ -4389,6 +4393,13 @@ bot.on('callback_query', async (query) => {
       break;
     }
 
+    case 'admin_xhaber': {
+      await bot.answerCallbackQuery(query.id, { text: '🐦📰 X Haber taranıyor...' }).catch(() => {});
+      const fakeMsg2 = { chat: { id: chatId }, from: query.from };
+      bot.emit('text', { ...fakeMsg2, text: '/xhaber', message_id: Date.now() }, ['/xhaber', null]);
+      break;
+    }
+
     case 'admin_post_text': {
       pendingAdminAction.set(chatId, { action: 'post_text' });
       await bot.answerCallbackQuery(query.id).catch(() => {});
@@ -4885,6 +4896,83 @@ async function fetchXAccountVideos(username) {
   });
 }
 
+// ─── Tweet metadata al (yt-dlp --dump-json) ──────────────────────────────────
+async function fetchTweetText(tweetUrl) {
+  if (!TWITTER_COOKIES_FILE) return null;
+  return new Promise((resolve) => {
+    const args = [
+      tweetUrl,
+      '--dump-json',
+      '--no-playlist',
+      '--quiet', '--no-warnings',
+      '--no-check-certificate',
+      '--socket-timeout', '20',
+      '--cookies', TWITTER_COOKIES_FILE,
+    ];
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
+    let stdout = '';
+    proc.stdout.on('data', d => { stdout += d; });
+    const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(null); }, 30000);
+    proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
+    proc.on('close', () => {
+      clearTimeout(killTimer);
+      try {
+        const j = JSON.parse(stdout.trim());
+        resolve({ title: j.title || '', description: j.description || j.full_text || '' });
+      } catch { resolve(null); }
+    });
+  });
+}
+
+// ─── X caption oluştur: başlık + AI özet ─────────────────────────────────────
+async function buildXCaption(title, description) {
+  const cleanedTitle = cleanTitle(title.replace(/https?:\/\/\S+/g, '').trim()).slice(0, 200);
+  const cleanedDesc  = (description || '').replace(/https?:\/\/\S+/g, '').trim().slice(0, 300);
+  const baseText = cleanedTitle || cleanedDesc || '🐦 X/Twitter Haberi';
+  let caption = `🐦 ${baseText}`;
+  if (AI_ENABLED) {
+    const summary = await summarizeNews(baseText, cleanedDesc).catch(() => null);
+    if (summary) caption += `\n\n${cleanArrows(summary)}`;
+  }
+  return caption.slice(0, 1024);
+}
+
+// ─── X hesap zaman çizelgesini çek (metin + medya tüm tweetler) ──────────────
+async function fetchXAccountTweets(username) {
+  if (!TWITTER_COOKIES_FILE) return [];
+  const url = `https://x.com/${username}`;
+  return new Promise((resolve) => {
+    const args = [
+      url,
+      '--playlist-items', '1-15',
+      '--quiet', '--no-warnings',
+      '--dump-json', '--flat-playlist',
+      '--no-check-certificate',
+      '--socket-timeout', '20',
+      '--cookies', TWITTER_COOKIES_FILE,
+    ];
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); } catch { resolve([]); return; }
+    let stdout = '';
+    proc.stdout.on('data', d => { stdout += d; });
+    const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve([]); }, 40000);
+    proc.on('error', () => { clearTimeout(killTimer); resolve([]); });
+    proc.on('close', () => {
+      clearTimeout(killTimer);
+      const entries = [];
+      for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line.trim());
+          if (e?.webpage_url) entries.push(e);
+        } catch {}
+      }
+      resolve(entries);
+    });
+  });
+}
+
 // ─── /xvideo — Tweet URL'sinden veya auto-scan ile X videosu kanala gönder ───
 bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
   if (!isAdmin(msg.chat.id)) return;
@@ -4905,12 +4993,14 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
           return;
         }
         await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+        // Tweet metnini al
+        const tweetMeta = await fetchTweetText(tweetUrl);
+        const tweetCaption = await buildXCaption(tweetMeta?.title || '', tweetMeta?.description || '');
         try {
-          await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+          await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: tweetCaption, supports_streaming: true });
         } catch (sendErr) {
           if (sendErr.message?.includes('no video')) {
-            // Telegram video olarak kabul etmedi — dosya olarak gönder
-            await bot.sendDocument(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu' });
+            await bot.sendDocument(CHANNEL_ID, { source: filePath }, { caption: tweetCaption });
           } else { throw sendErr; }
         }
         try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
@@ -4958,9 +5048,11 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
         const filePath = await downloadTweetVideo(postUrl);
         if (filePath) {
           try {
-            await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: title.slice(0, 1024), supports_streaming: true });
+            const xCap = await buildXCaption(title, entry.description || '');
+            await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: xCap, supports_streaming: true });
             publishedUrls.add(postUrl);
             persistPublishedUrls();
+            isTitleDuplicate(title);
             try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
             await bot.editMessageText(`✅ ${account.label} videosu kanala gönderildi!`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
             sent = true; break;
@@ -4971,6 +5063,118 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
   }
   if (!sent) {
     await bot.editMessageText('❌ Hiçbir hesaptan yeni video bulunamadı.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+  }
+});
+
+// ─── /xhaber — X hesaplarından video+metin haberleri çek ve kanala paylaş ────
+bot.onText(/\/xhaber/, async (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
+  const chatId = msg.chat.id;
+
+  if (!TWITTER_COOKIES_FILE) {
+    await bot.sendMessage(chatId,
+      '🐦📰 *X Haber*\n\n' +
+      'Bu özellik `TWITTER_COOKIES` değişkeni gerektirir.\n\n' +
+      'Railway → Variables → `TWITTER_COOKIES` ekleyin.\n' +
+      '_(Replit Secrets\'taki değerin aynısını kullanın)_',
+      { parse_mode: 'Markdown' }
+    );
+    return;
+  }
+
+  const statusMsg = await bot.sendMessage(chatId, '🐦📰 X hesapları taranıyor...').catch(() => null);
+  let sent = false;
+
+  for (const account of X_ACCOUNTS) {
+    if (sent) break;
+    await bot.editMessageText(
+      `🐦 @${account.username} (${account.label}) zaman çizelgesi taranıyor...`,
+      { chat_id: chatId, message_id: statusMsg?.message_id }
+    ).catch(() => {});
+
+    try {
+      // Önce video içerikli tweet'leri dene
+      const videoEntries = await fetchXAccountVideos(account.username);
+      for (const entry of videoEntries.slice(0, 8)) {
+        if (sent) break;
+        const postUrl = entry.webpage_url || entry.url;
+        if (!postUrl || publishedUrls.has(postUrl)) continue;
+        const rawTitle = (entry.title || entry.description || '').replace(/https?:\/\/\S+/g, '').trim();
+        const title = cleanTitle(rawTitle).slice(0, 200) || `${account.label} haberi`;
+        if (isTitleDuplicate(title)) continue;
+
+        await bot.editMessageText(
+          `⬇️ ${account.label}: "${title.slice(0, 50)}..." video indiriliyor...`,
+          { chat_id: chatId, message_id: statusMsg?.message_id }
+        ).catch(() => {});
+
+        const filePath = await downloadTweetVideo(postUrl);
+        if (filePath) {
+          try {
+            const xCap = await buildXCaption(title, entry.description || '');
+            await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: xCap, supports_streaming: true });
+            publishedUrls.add(postUrl);
+            persistPublishedUrls();
+            isTitleDuplicate(title);
+            try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+            await bot.editMessageText(
+              `✅ ${account.label} video haberi kanala gönderildi!`,
+              { chat_id: chatId, message_id: statusMsg?.message_id }
+            ).catch(() => {});
+            sent = true;
+          } catch { try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {} }
+        }
+      }
+
+      // Video bulunamazsa metin tweet'lerini dene
+      if (!sent) {
+        const textEntries = await fetchXAccountTweets(account.username);
+        for (const entry of textEntries.slice(0, 15)) {
+          if (sent) break;
+          const postUrl = entry.webpage_url || entry.url;
+          if (!postUrl || publishedUrls.has(postUrl)) continue;
+          const rawText = (entry.title || entry.description || '').replace(/https?:\/\/\S+/g, '').trim();
+          const title = cleanTitle(rawText).slice(0, 300);
+          if (!title || title.length < 20) continue;
+          if (isTitleDuplicate(title)) continue;
+
+          await bot.editMessageText(
+            `📝 ${account.label}: metin tweet bulundu, yayınlanıyor...`,
+            { chat_id: chatId, message_id: statusMsg?.message_id }
+          ).catch(() => {});
+
+          let caption = `🐦 *${account.label}*\n\n${title}`;
+          if (AI_ENABLED) {
+            const summary = await summarizeNews(title, '').catch(() => null);
+            if (summary) caption += `\n\n${cleanArrows(summary)}`;
+          }
+          caption = caption.slice(0, 4096);
+
+          try {
+            await bot.sendMessage(CHANNEL_ID, caption, { parse_mode: 'Markdown', disable_web_page_preview: true });
+            publishedUrls.add(postUrl);
+            persistPublishedUrls();
+            isTitleDuplicate(title);
+            await bot.editMessageText(
+              `✅ ${account.label} metin haberi kanala gönderildi!`,
+              { chat_id: chatId, message_id: statusMsg?.message_id }
+            ).catch(() => {});
+            sent = true;
+          } catch (e) {
+            console.error(`❌ xhaber metin gönderme: ${e.message?.slice(0, 80)}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error(`❌ xhaber @${account.username}: ${e.message?.slice(0, 60)}`);
+    }
+  }
+
+  if (!sent) {
+    await bot.editMessageText(
+      '❌ Hiçbir hesaptan yeni haber bulunamadı. Tüm içerikler zaten yayınlanmış olabilir.',
+      { chat_id: chatId, message_id: statusMsg?.message_id }
+    ).catch(() => {});
   }
 });
 
