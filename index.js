@@ -1770,6 +1770,15 @@ const BLOCKED_TITLE_PATTERNS = [
   // Spor dışı "17'den vurdu" tarzı saçma başlıklar
   /\d+['']?den vurdu/i,
   /\d+\s*yaşında(ki)?\s+(ünlü|oyuncu|şarkıcı|model)/i,
+
+  // ─── Soru formatı clickbait filtresi ──────────────────────────────────────
+  // "X açıldı mı?", "X devam edecek mi?", "Nerede oldu?" tarzı SEO başlıkları
+  /\b(açıldı|kapandı|kalktı|geldi|gitti|bitti|oldu|olacak|yapıldı|verildi|kaldırıldı|ertelendi|iptal edildi|uzatıldı|değişti|arttı|düştü)\s+m[ıiuü]\?/i,
+  /\b(devam edecek|devam ediyor|geri dönüyor|geri döndü|başlıyor|başladı|bitiyor)\s+m[ıiuü]\?/i,
+  /\b(eğitime|üretime|faaliyete)\s+devam\s+edecek\s+m[ıiuü]\?/i,
+  /\b(ne zaman|nerede|nasıl|kim oldu|kaçta|hangi gün|neden|niçin)\b.*\?$/i,
+  // Çift soru işaretli başlıklar: "X mi? Y mi?" tipi
+  /\?[^?]{0,60}\?\s*$/
 ];
 
 function isRecentNews(item) {
