@@ -4794,10 +4794,15 @@ async function downloadTweetVideo(tweetUrl) {
       proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
       proc.on('close', code => {
         clearTimeout(killTimer);
-        if (code !== 0) { console.log(`⚠️ tweet yt-dlp ${JSON.stringify(extraArgs)}: ${stderr.slice(-100)}`); resolve(null); return; }
+        if (code !== 0) { console.log(`⚠️ tweet yt-dlp ${JSON.stringify(extraArgs)}: ${stderr.slice(-150)}`); resolve(null); return; }
         try {
           const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
-          resolve(files.length ? path.join(tmpDir, files[0]) : null);
+          if (!files.length) { resolve(null); return; }
+          const fp = path.join(tmpDir, files[0]);
+          const stat = fs.statSync(fp);
+          // 50KB'dan küçükse video değil (resim/boş dosya)
+          if (stat.size < 50 * 1024) { console.log(`⚠️ tweet dosya çok küçük: ${stat.size} bytes`); resolve(null); return; }
+          resolve(fp);
         } catch { resolve(null); }
       });
     });
@@ -4870,12 +4875,19 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
           return;
         }
         await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
-        await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+        try {
+          await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+        } catch (sendErr) {
+          if (sendErr.message?.includes('no video')) {
+            // Telegram video olarak kabul etmedi — dosya olarak gönder
+            await bot.sendDocument(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu' });
+          } else { throw sendErr; }
+        }
         try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
         await bot.editMessageText('✅ Tweet videosu kanala gönderildi!', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
       } else {
         await bot.editMessageText(
-          '❌ Video indirilemedi.\n\nOlası sebepler:\n• Tweet videosu yok (sadece metin/resim)\n• Tweet silinmiş veya gizli\n• Twitter API değişikliği\n\n💡 Çözüm: Railway\'e TWITTER_COOKIES ekleyin',
+          '❌ Bu tweet\'te video bulunamadı.\n\nOlası sebepler:\n• Tweet sadece metin veya resim içeriyor\n• Tweet silinmiş veya gizli\n• Twitter API kısıtlaması\n\n💡 Videosu olan bir tweet linki deneyin.',
           { chat_id: chatId, message_id: statusMsg?.message_id }
         ).catch(() => {});
       }
@@ -5282,12 +5294,18 @@ bot.on('message', async (msg) => {
                 try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
               } else {
                 await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
-                await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+                try {
+                  await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+                } catch (sendErr) {
+                  if (sendErr.message?.includes('no video')) {
+                    await bot.sendDocument(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu' });
+                  } else { throw sendErr; }
+                }
                 try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
                 await bot.editMessageText('✅ Tweet videosu kanala gönderildi!', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
               }
             } else {
-              await bot.editMessageText('❌ Video indirilemedi. Tweet videosu olmayabilir veya gizli/silinmiş olabilir.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+              await bot.editMessageText('❌ Bu tweet\'te video bulunamadı. Sadece video içeren tweetleri deneyin.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
             }
           } catch (e) {
             await bot.editMessageText(`❌ Hata: ${e.message?.slice(0, 150)}`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
