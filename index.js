@@ -3684,6 +3684,7 @@ function adminPanelKeyboard() {
         { text: '🖼 Resim Paylaş', callback_data: 'admin_post_photo' },
       ],
       [
+        { text: '🐦 X Video', callback_data: 'admin_xvideo' },
         { text: '🗑 Haber Kaldır', callback_data: 'admin_delete_msg' },
       ],
     ],
@@ -3705,7 +3706,7 @@ const BOT_COMMANDS = [
   { cmd: '/filtrelerim',        icon: '📝', desc: 'Aktif filtrelerini listeler' },
   { cmd: '/filtre temizle',     icon: '🧹', desc: 'Tüm filtreleri tek seferde siler' },
   { cmd: '/video <url>',        icon: '🎬', desc: 'Verilen URL\'den video indirir ve kanala gönderir' },
-  { cmd: '/xvideo',             icon: '🐦', desc: 'Muhalif gazete X hesaplarından video çeker ve kanala gönderir' },
+  { cmd: '/xvideo <tweet_url>', icon: '🐦', desc: 'Tweet URL\'sinden video indirir ve kanala gönderir — örn: /xvideo https://x.com/gazetesozcu/status/123' },
   { cmd: '/myid',               icon: '🪪', desc: 'Kendi Telegram Chat ID\'ini gösterir' },
   { cmd: '/yorum',              icon: '💬', desc: 'Editörlere yorum veya görüş iletir' },
   { cmd: '/dur',                icon: '⏸', desc: 'Otomatik yayını duraklatır (sadece admin)' },
@@ -4352,6 +4353,39 @@ bot.on('callback_query', async (query) => {
         const errText = `❌ Yenileme hatası: ${err.message.slice(0,200)}`;
         if (refreshMsg) await bot.editMessageText(errText, { chat_id: chatId, message_id: refreshMsg.message_id }).catch(() => bot.sendMessage(chatId, errText));
       }
+      break;
+    }
+
+    case 'admin_xvideo': {
+      await bot.answerCallbackQuery(query.id, { text: '🐦 Tweet URL bekliyor...' }).catch(() => {});
+      const hasCookies = !!TWITTER_COOKIES_FILE;
+      const xvideoText = hasCookies
+        ? '🐦 *X/Twitter Video*\n\nTweet URL\'sini gönderin veya auto\\-scan başlatalım:\n\n' +
+          '• Belirli bir tweet için URL yapıştırın\n' +
+          '• Hesapları otomatik taramak için:\n`/xvideo`'
+        : '🐦 *X/Twitter Video*\n\nBir tweet URL\'si yapıştırın:\n\n' +
+          '`/xvideo https://x\\.com/hesap/status/ID`\n\n' +
+          'Örnek:\n`/xvideo https://x\\.com/gazetesozcu/status/123456789`\n\n' +
+          '─────────────────────\n' +
+          '💡 *İpucu:* X\'ten herhangi bir tweet\'i paylaşın, linki kopyalayıp yukarıdaki formatta gönderin\\.';
+      pendingAdminAction.set(chatId, { action: 'xvideo_url' });
+      await bot.sendMessage(chatId, xvideoText, {
+        parse_mode: 'MarkdownV2',
+        reply_markup: {
+          inline_keyboard: [
+            hasCookies ? [{ text: '🔍 Otomatik Tara', callback_data: 'admin_xvideo_autoscan' }] : [],
+            [{ text: '◀️ Admin Paneli', callback_data: 'admin_back' }],
+          ].filter(row => row.length > 0),
+        },
+      });
+      break;
+    }
+
+    case 'admin_xvideo_autoscan': {
+      await bot.answerCallbackQuery(query.id, { text: '🔍 Taranıyor...' }).catch(() => {});
+      // /xvideo komutunu taklit et (cookies ile auto-scan)
+      const fakeMsg = { chat: { id: chatId }, from: query.from };
+      bot.emit('text', { ...fakeMsg, text: '/xvideo', message_id: Date.now() }, ['/xvideo', null, null]);
       break;
     }
 
@@ -5232,6 +5266,41 @@ bot.on('message', async (msg) => {
     // Bekleyen admin aksiyonu var mı?
     if (pendingAdminAction.has(chatId)) {
       const { action } = pendingAdminAction.get(chatId);
+
+      // X video URL bekleme
+      if (action === 'xvideo_url' && msg.text) {
+        const urlMatch = msg.text.match(/https?:\/\/(?:x\.com|twitter\.com)\/\S+\/status\/\d+/i);
+        if (urlMatch) {
+          pendingAdminAction.delete(chatId);
+          const tweetUrl = urlMatch[0];
+          const statusMsg = await bot.sendMessage(chatId, `⬇️ Tweet videosu indiriliyor...\n${tweetUrl.slice(0, 60)}`).catch(() => null);
+          try {
+            const filePath = await downloadTweetVideo(tweetUrl);
+            if (filePath) {
+              const stat = fs.statSync(filePath);
+              const mb = Math.round(stat.size / 1024 / 1024);
+              if (stat.size > 50 * 1024 * 1024) {
+                await bot.editMessageText('⚠️ Video çok büyük (50MB+), gönderilemedi.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+                try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+              } else {
+                await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+                await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+                try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+                await bot.editMessageText('✅ Tweet videosu kanala gönderildi!', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+              }
+            } else {
+              await bot.editMessageText('❌ Video indirilemedi. Tweet videosu olmayabilir veya gizli/silinmiş olabilir.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+            }
+          } catch (e) {
+            await bot.editMessageText(`❌ Hata: ${e.message?.slice(0, 150)}`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+          }
+        } else if (/\/admin/i.test(msg.text)) {
+          pendingAdminAction.delete(chatId);
+        } else {
+          await bot.sendMessage(chatId, '⚠️ Geçerli bir tweet URL\'si girin.\nÖrnek: `https://x.com/gazetesozcu/status/123456789`', { parse_mode: 'Markdown' });
+        }
+        return;
+      }
 
       // Metin paylaşma
       if (action === 'post_text' && msg.text) {
