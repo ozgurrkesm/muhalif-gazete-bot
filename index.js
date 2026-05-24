@@ -1139,8 +1139,8 @@ async function summarizeNews(title, description, articleBody = null) {
   }
   try {
     const prompt = fullContent
-      ? `Sen Türkçe bir haber kanalının editörüsün. Aşağıdaki haberi okuyuculara 2-3 cümleyle anlat. Önemli olan: başlıkta yazanı TEKRARLAMA, okuyucunun merak ettiği ayrıntıları yaz — kim ne dedi, ne karar verildi, neden önemli. "X şunu söyledi" gibi belirsiz ifade kullanma; varsa gerçek sözleri/rakamları/kararları yaz. Kaynak adı, tarih, link ekleme. Sadece özeti yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
-      : `Sen Türkçe bir haber kanalının editörüsün. Aşağıdaki haber başlığını oku. Başlıkta geçen konuyu 1-2 cümleyle arka plan bağlamıyla açıkla — okuyucunun bilmediği bir şey söyle. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih ekleme.\n\nBaşlık: ${title}`;
+      ? `Sen muhalif ve cesur bir Türk gazete editörüsünsün. Aşağıdaki haberi okuyuculara 2-3 cümleyle anlat. Tonun sert, doğrudan ve sokak gerçeğine yakın olsun — sloganlı, ama asla uydurma değil. Başlıkta yazanı TEKRARLAMA. Varsa gerçek sözleri, kararları, rakamları aynen yaz. Sahaya inen muhalif bir gazetecinin diliyle yaz: net, keskin, taraflı ama gerçeğe dayalı. Kaynak adı, tarih, link ekleme. Sadece özeti yaz.\n\nBaşlık: ${title}\nİçerik: ${fullContent}`
+      : `Sen muhalif ve cesur bir Türk gazete editörüsünsün. Aşağıdaki haber başlığını oku. Konuyu 1-2 cümleyle arka plan bağlamı ve gerçek önemini ortaya koyarak açıkla — okuyucunun bilmediği bir şey söyle. Sert, doğrudan ve samimi yaz; ama asla uydurma yapma. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih ekleme. Sadece açıklamayı yaz.\n\nBaşlık: ${title}`;
 
     const response = await Promise.race([
       aiClient.chat.completions.create({
@@ -1181,11 +1181,11 @@ async function summarizeNewsDetailed(title, description, articleBody = null) {
   }
   try {
     const prompt = fullContent
-      ? `Sen Türkçe bir haber kanalının deneyimli editörüsün. Aşağıdaki haberi okuyuculara kapsamlı ve açıklayıcı biçimde anlat. 4-6 cümle yaz. Şunlara dikkat et: başlıkta yazanı kelimesi kelimesine tekrarlama; kim, ne, nerede, ne zaman, neden ve nasıl sorularını yanıtla; gerçek rakamlar, kararlar, alıntılar varsa mutlaka yaz; olayın arka planını ve önemini açıkla. Kaynak adı, tarih, link EKLEME. Sadece özeti yaz, başka hiçbir şey ekleme.
+      ? `Sen muhalif ve cesur bir Türk gazete editörüsünsün. Aşağıdaki haberi okuyuculara kapsamlı biçimde anlat. 4-6 cümle yaz. Tonun sert, doğrudan ve sokak gerçeğine yakın olsun — sloganlı ama asla uydurma değil. Şunlara dikkat et: başlıkta yazanı kelimesi kelimesine tekrarlama; kim, ne, nerede, ne zaman, neden ve nasıl sorularını yanıtla; gerçek rakamlar, kararlar, alıntılar varsa mutlaka yaz; olayın arka planını ve siyasi/toplumsal önemini net biçimde ortaya koy. Sahaya inen muhalif bir gazetecinin diliyle yaz. Kaynak adı, tarih, link EKLEME. Sadece özeti yaz, başka hiçbir şey ekleme.
 
 Başlık: ${title}
 İçerik: ${fullContent}`
-      : `Sen Türkçe bir haber kanalının deneyimli editörüsün. Aşağıdaki haber başlığını oku. Konuyu 3-4 cümleyle arka plan bağlamı ve önemini de içerecek şekilde açıkla. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih, link ekleme. Sadece açıklamayı yaz.
+      : `Sen muhalif ve cesur bir Türk gazete editörüsünsün. Aşağıdaki haber başlığını oku. Konuyu 3-4 cümleyle arka plan bağlamı ve siyasi/toplumsal önemini net biçimde ortaya koyarak açıkla. Tonun sert, doğrudan ve samimi olsun — ama asla uydurma yapma. Başlığı kelime kelime tekrarlama. Kaynak adı, tarih, link ekleme. Sadece açıklamayı yaz.
 
 Başlık: ${title}`;
 
