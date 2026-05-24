@@ -6097,7 +6097,8 @@ bot.on('message', async (msg) => {
         }
       );
     }
-    pendingReplies.set(forwarded.message_id, { userId: chatId, userName });
+    const lastMsgText = msg.text ? msg.text.slice(0, 200) : (msg.caption ? '[Fotoğraf] ' + msg.caption.slice(0, 200) : '[Fotoğraf]');
+    pendingReplies.set(forwarded.message_id, { userId: chatId, userName, lastMsg: lastMsgText });
     await bot.sendMessage(msg.chat.id, '✅ Yorumunuz editöre iletildi, teşekkürler!');
   } catch (e) {
     console.error('Yorum iletilemedi:', e.message);
@@ -6145,10 +6146,13 @@ bot.on('callback_query', async (query) => {
 
   const userId = data.replace('reply_user_', '');
   await bot.answerCallbackQuery(query.id).catch(() => {});
+  const replyInfo = [...pendingReplies.values()].find(v => String(v.userId) === String(userId));
+  const replyName = replyInfo?.userName || 'Kullanıcı';
+  const replyPreview = replyInfo?.lastMsg ? '\n\n📝 Yazdığı: _' + replyInfo.lastMsg.slice(0, 150) + '_' : '';
   await bot.sendMessage(
     query.message.chat.id,
-    `✏️ Kullanıcıya (${userId}) yanıt yazın — bu mesajı alıntılayarak (reply) gönderin:`,
-    { reply_markup: { force_reply: true } }
+    '✏️ *' + replyName + '* adlı kullanıcıya yanıt yazın — bu mesajı *alıntılayarak (reply)* gönderin:' + replyPreview,
+    { parse_mode: 'Markdown', reply_markup: { force_reply: true } }
   );
 });
 
