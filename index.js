@@ -5039,8 +5039,7 @@ async function fetchTweetText(tweetUrl) {
         const tweet = data?.tweet;
         if (tweet) {
           const text = (tweet.text || tweet.full_text || '').replace(/https?:\/\/t\.co\/\S+/g, '').trim();
-          const authorName = tweet.author?.name || tweet.author?.screen_name || '';
-          const title = authorName ? `${authorName}: ${text}` : text;
+          const title = text;
           console.log(`✅ fxtwitter API tweet metni alındı (${text.length} karakter)`);
           return { title: title.slice(0, 500), description: text.slice(0, 1000) };
         }
