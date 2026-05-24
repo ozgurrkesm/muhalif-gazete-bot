@@ -4889,17 +4889,15 @@ bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
   if (!TWITTER_COOKIES_FILE) {
     await bot.sendMessage(chatId,
       '🐦 *X/Twitter Video Komutu*\n\n' +
-      '*Kullanım:*\n`/xvideo https\\://x\\.com/hesap/status/ID`\n\n' +
-      'Tweet URL\\'sini kopyalayıp yukarıdaki gibi gönderin\\.\n\n' +
-      '*Örnek:*\n`/xvideo https\\://x\\.com/gazetesozcu/status/123456789`\n\n' +
+      '*Kullanım:*\n`/xvideo https://x.com/hesap/status/ID`\n\n' +
+      'Tweet URL yazin ve gonderin.\n\n' +
+      '*Örnek:*\n`/xvideo https://x.com/gazetesozcu/status/123456789`\n\n' +
       '─────────────────────\n' +
-      '⚙️ *Otomatik tarama için:* Railway\\'e `TWITTER\\_COOKIES` değişkeni ekleyin\\.\n' +
-      'Tarayıcınızdan Twitter çerezlerini `cookies\\.txt` olarak indirip base64\\'e çevirin\\.',
-      { parse_mode: 'MarkdownV2' }
+      'Otomatik tarama icin Railway TWITTER_COOKIES degiskeni ekleyin.',
+      { parse_mode: 'Markdown' }
     );
     return;
   }
-
   // Auto-scan modu (cookies var)
   const statusMsg = await bot.sendMessage(chatId, '🐦 X hesapları taranıyor (cookies ile)...').catch(() => null);
   let sent = false;
