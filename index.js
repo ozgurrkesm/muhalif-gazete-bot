@@ -6072,6 +6072,9 @@ bot.on('message', async (msg) => {
   const adminId = ADMIN_CHAT_ID || settings.adminChatIds[0];
   if (!adminId) return;
 
+  const _nowD = new Date();
+  const nowTR = _nowD.toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric' });
+  const msgSource = msg.text?.startsWith('/yorum') ? '/yorum komutu' : (msg.chat?.type === 'private' ? 'Özel mesaj' : 'Grup mesajı');
   try {
     let forwarded;
     if (msg.photo) {
@@ -6081,7 +6084,7 @@ bot.on('message', async (msg) => {
         adminId,
         photo.file_id,
         {
-          caption: `💬 *Yeni Yorum (Fotoğraf)*\n👤 ${userName} (ID: ${chatId})${msg.caption ? '\n\n' + msg.caption.slice(0, 500) : ''}`,
+          caption: `💬 *Yeni Yorum (Fotoğraf)*\n👤 ${userName} | ID: ${chatId}\n🕐 ${nowTR}\n📍 Kaynak: ${msgSource}${msg.caption ? '\n\n' + msg.caption.slice(0, 500) : ''}`,
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[{ text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }]] }
         }
@@ -6090,7 +6093,7 @@ bot.on('message', async (msg) => {
       // Metin yorumu
       forwarded = await bot.sendMessage(
         adminId,
-        `💬 *Yeni Yorum*\n👤 ${userName} (ID: ${chatId})\n\n${msg.text.slice(0, 1000)}`,
+        `💬 *Yeni Yorum*\n👤 ${userName} | ID: ${chatId}\n🕐 ${nowTR}\n📍 Kaynak: ${msgSource}\n\n${msg.text.slice(0, 1000)}`,
         {
           parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: [[{ text: '↩️ Yanıtla', callback_data: `reply_user_${chatId}` }]] }
@@ -6098,7 +6101,7 @@ bot.on('message', async (msg) => {
       );
     }
     const lastMsgText = msg.text ? msg.text.slice(0, 200) : (msg.caption ? '[Fotoğraf] ' + msg.caption.slice(0, 200) : '[Fotoğraf]');
-    pendingReplies.set(forwarded.message_id, { userId: chatId, userName, lastMsg: lastMsgText });
+    pendingReplies.set(forwarded.message_id, { userId: chatId, userName, lastMsg: lastMsgText, sentAt: nowTR, source: msgSource });
     await bot.sendMessage(msg.chat.id, '✅ Yorumunuz editöre iletildi, teşekkürler!');
   } catch (e) {
     console.error('Yorum iletilemedi:', e.message);
@@ -6148,10 +6151,12 @@ bot.on('callback_query', async (query) => {
   await bot.answerCallbackQuery(query.id).catch(() => {});
   const replyInfo = [...pendingReplies.values()].find(v => String(v.userId) === String(userId));
   const replyName = replyInfo?.userName || 'Kullanıcı';
-  const replyPreview = replyInfo?.lastMsg ? '\n\n📝 Yazdığı: _' + replyInfo.lastMsg.slice(0, 150) + '_' : '';
+  const replyTime = replyInfo?.sentAt ? '\n🕐 Gönderim: ' + replyInfo.sentAt : '';
+  const replySource = replyInfo?.source ? '\n📍 Kaynak: ' + replyInfo.source : '';
+  const replyPreview = replyInfo?.lastMsg ? '\n\n📝 Yazdığı:\n_' + replyInfo.lastMsg.slice(0, 200) + '_' : '';
   await bot.sendMessage(
     query.message.chat.id,
-    '✏️ *' + replyName + '* adlı kullanıcıya yanıt yazın — bu mesajı *alıntılayarak (reply)* gönderin:' + replyPreview,
+    '✏️ *' + replyName + '* adlı kullanıcıya yanıt yazın — bu mesajı *alıntılayarak (reply)* gönderin:' + replyTime + replySource + replyPreview,
     { parse_mode: 'Markdown', reply_markup: { force_reply: true } }
   );
 });
