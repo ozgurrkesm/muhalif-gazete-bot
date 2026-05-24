@@ -3603,6 +3603,16 @@ async function checkBreakingNews() {
           }
           if (caption.length > 1024) caption = caption.slice(0, 1021) + '…';
 
+          // ── Son kontrol: özet eklenemeyen haberler GÖNDERILMEZ ──────────────
+          // caption yapısı: "🚨 SON DAKİKA" + "\n\n" + başlık + "\n\n" + özet
+          // Özet yoksa sadece 2 blok var → yetersiz → atla
+          if (caption.split('\n\n').length < 3) {
+            console.log(`⛔ Son dakika özet yok, atlandı: ${title.slice(0, 70)}`);
+            breakingPublishedUrls.delete(url);
+            continue;
+          }
+          // ────────────────────────────────────────────────────────────────────
+
           // Haber sitesinden video — 20s timeout
           if (!realUrl.includes('news.google.com')) {
             const ok = await Promise.race([
