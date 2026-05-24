@@ -4703,7 +4703,77 @@ bot.onText(/\/video/, async (msg) => {
   }
 });
 
-// ─── /xvideo — Muhalif gazete X (Twitter) hesaplarından video çek ────────────
+// ─── Twitter/X cookies (opsiyonel — auto-scan için gerekli) ──────────────────
+const TWITTER_COOKIES_FILE = (() => {
+  const b64 = process.env.TWITTER_COOKIES;
+  if (!b64) return null;
+  try {
+    const decoded = Buffer.from(b64, 'base64').toString('utf8');
+    const tmpPath = '/tmp/twitter_cookies.txt';
+    fs.writeFileSync(tmpPath, decoded, 'utf8');
+    console.log('✅ Twitter/X cookies yüklendi — auto-scan aktif');
+    return tmpPath;
+  } catch (e) {
+    console.warn('⚠️ Twitter cookies yüklenemedi:', e.message);
+    return null;
+  }
+})();
+
+// ─── Tek tweet URL'sinden video indir (yt-dlp syndication API) ───────────────
+async function downloadTweetVideo(tweetUrl) {
+  const tmpDir = path.join(os.tmpdir(), `tweet_${Date.now()}`);
+  try { fs.mkdirSync(tmpDir, { recursive: true }); } catch {}
+  const outputTemplate = path.join(tmpDir, 'video.%(ext)s');
+
+  // Denenecek yöntemler sırasıyla
+  const strategies = [
+    // 1. Syndication API (en iyi — auth gerektirmez, bireysel tweetler için)
+    ['--extractor-args', 'twitter:api_type=syndication'],
+    // 2. GraphQL API (bazen daha güncel, yine auth gerekmez)
+    ['--extractor-args', 'twitter:api_type=graphql'],
+    // 3. Düz çekme
+    [],
+  ];
+
+  for (const extraArgs of strategies) {
+    const filePath = await new Promise((resolve) => {
+      const cookieArgs = TWITTER_COOKIES_FILE ? ['--cookies', TWITTER_COOKIES_FILE] : [];
+      const args = [
+        tweetUrl,
+        '--no-playlist',
+        '--max-filesize', '48m',
+        '-f', 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best[height<=480]/best',
+        '--merge-output-format', 'mp4',
+        '--no-part',
+        '--socket-timeout', '25',
+        '--no-check-certificate',
+        '--no-warnings',
+        '-o', outputTemplate,
+        ...extraArgs,
+        ...cookieArgs,
+      ];
+      let proc;
+      try { proc = spawn(YTDLP_BIN, args); } catch { resolve(null); return; }
+      let stderr = '';
+      proc.stderr.on('data', d => { stderr += d; });
+      const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(null); }, 90000);
+      proc.on('error', () => { clearTimeout(killTimer); resolve(null); });
+      proc.on('close', code => {
+        clearTimeout(killTimer);
+        if (code !== 0) { console.log(`⚠️ tweet yt-dlp ${JSON.stringify(extraArgs)}: ${stderr.slice(-100)}`); resolve(null); return; }
+        try {
+          const files = fs.readdirSync(tmpDir).filter(f => /\.(mp4|webm|mkv|mov)$/i.test(f));
+          resolve(files.length ? path.join(tmpDir, files[0]) : null);
+        } catch { resolve(null); }
+      });
+    });
+    if (filePath) return filePath;
+  }
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  return null;
+}
+
+// ─── X hesap timeline tarama (TWITTER_COOKIES gerektirir) ───────────────────
 const X_ACCOUNTS = [
   { username: 'gazetesozcu',    label: 'Sözcü' },
   { username: 'cumhuriyetgzt',  label: 'Cumhuriyet' },
@@ -4716,17 +4786,17 @@ const X_ACCOUNTS = [
 ];
 
 async function fetchXAccountVideos(username) {
-  const url = `https://x.com/${username}`;
+  if (!TWITTER_COOKIES_FILE) return [];
+  const url = `https://x.com/${username}/media`;
   return new Promise((resolve) => {
     const args = [
       url,
-      '--playlist-items', '1-15',
-      '--quiet',
-      '--no-warnings',
-      '--dump-json',
-      '--flat-playlist',
+      '--playlist-items', '1-10',
+      '--quiet', '--no-warnings',
+      '--dump-json', '--flat-playlist',
       '--no-check-certificate',
       '--socket-timeout', '20',
+      '--cookies', TWITTER_COOKIES_FILE,
     ];
     let proc;
     try { proc = spawn(YTDLP_BIN, args); } catch { resolve([]); return; }
@@ -4739,67 +4809,94 @@ async function fetchXAccountVideos(username) {
       const entries = [];
       for (const line of stdout.split('\n')) {
         if (!line.trim()) continue;
-        try {
-          const e = JSON.parse(line.trim());
-          if (e && e.webpage_url) entries.push(e);
-        } catch {}
+        try { const e = JSON.parse(line.trim()); if (e?.webpage_url) entries.push(e); } catch {}
       }
       resolve(entries);
     });
   });
 }
 
-bot.onText(/\/xvideo/, async (msg) => {
+// ─── /xvideo — Tweet URL'sinden veya auto-scan ile X videosu kanala gönder ───
+bot.onText(/\/xvideo(?:\s+(https?:\/\/\S+))?/, async (msg, match) => {
   if (!isAdmin(msg.chat.id)) return;
   const chatId = msg.chat.id;
-  const statusMsg = await bot.sendMessage(chatId, '🐦 X hesaplarında video aranıyor...').catch(() => null);
+  const tweetUrl = (match?.[1] || '').trim();
 
+  // ── Mod 1: Belirli bir tweet URL'si verildi ──────────────────────────────
+  if (tweetUrl && /x\.com|twitter\.com/i.test(tweetUrl)) {
+    const statusMsg = await bot.sendMessage(chatId, `⬇️ Tweet videosu indiriliyor...\n${tweetUrl.slice(0, 60)}`).catch(() => null);
+    try {
+      const filePath = await downloadTweetVideo(tweetUrl);
+      if (filePath) {
+        const stat = fs.statSync(filePath);
+        const mb = Math.round(stat.size / 1024 / 1024);
+        if (stat.size > 50 * 1024 * 1024) {
+          await bot.editMessageText('⚠️ Video çok büyük (50MB+), gönderilemedi.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+          try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+          return;
+        }
+        await bot.editMessageText(`📤 Kanala yükleniyor (${mb}MB)...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+        await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: '🐦 X/Twitter Videosu', supports_streaming: true });
+        try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+        await bot.editMessageText('✅ Tweet videosu kanala gönderildi!', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+      } else {
+        await bot.editMessageText(
+          '❌ Video indirilemedi.\n\nOlası sebepler:\n• Tweet videosu yok (sadece metin/resim)\n• Tweet silinmiş veya gizli\n• Twitter API değişikliği\n\n💡 Çözüm: Railway\'e TWITTER_COOKIES ekleyin',
+          { chat_id: chatId, message_id: statusMsg?.message_id }
+        ).catch(() => {});
+      }
+    } catch (e) {
+      await bot.editMessageText(`❌ Hata: ${e.message?.slice(0, 150)}`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+    }
+    return;
+  }
+
+  // ── Mod 2: Auto-scan (TWITTER_COOKIES gerektirir) ────────────────────────
+  if (!TWITTER_COOKIES_FILE) {
+    await bot.sendMessage(chatId,
+      '🐦 *X/Twitter Video Komutu*\n\n' +
+      '*Kullanım:*\n`/xvideo https\\://x\\.com/hesap/status/ID`\n\n' +
+      'Tweet URL\\'sini kopyalayıp yukarıdaki gibi gönderin\\.\n\n' +
+      '*Örnek:*\n`/xvideo https\\://x\\.com/gazetesozcu/status/123456789`\n\n' +
+      '─────────────────────\n' +
+      '⚙️ *Otomatik tarama için:* Railway\\'e `TWITTER\\_COOKIES` değişkeni ekleyin\\.\n' +
+      'Tarayıcınızdan Twitter çerezlerini `cookies\\.txt` olarak indirip base64\\'e çevirin\\.',
+      { parse_mode: 'MarkdownV2' }
+    );
+    return;
+  }
+
+  // Auto-scan modu (cookies var)
+  const statusMsg = await bot.sendMessage(chatId, '🐦 X hesapları taranıyor (cookies ile)...').catch(() => null);
   let sent = false;
   for (const account of X_ACCOUNTS) {
     if (sent) break;
+    await bot.editMessageText(`🐦 @${account.username} (${account.label}) taranıyor...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
     try {
-      await bot.editMessageText(
-        `🐦 @${account.username} (${account.label}) taranıyor...`,
-        { chat_id: chatId, message_id: statusMsg?.message_id }
-      ).catch(() => {});
-
       const entries = await fetchXAccountVideos(account.username);
-
       for (const entry of entries.slice(0, 8)) {
         const postUrl = entry.webpage_url || entry.url;
-        if (!postUrl) continue;
-        if (publishedUrls.has(postUrl)) continue;
+        if (!postUrl || publishedUrls.has(postUrl)) continue;
         const rawTitle = (entry.title || entry.description || '').replace(/https?:\/\/\S+/g, '').trim();
         const title = cleanTitle(rawTitle).slice(0, 200) || `${account.label} videosu`;
         if (isTitleDuplicate(title)) continue;
-
-        await bot.editMessageText(
-          `⬇️ ${account.label}: "${title.slice(0, 60)}..." indiriliyor...`,
-          { chat_id: chatId, message_id: statusMsg?.message_id }
-        ).catch(() => {});
-
-        const ok = await sendYouTubeVideoSmart(CHANNEL_ID, postUrl, title.slice(0, 1024));
-        if (ok) {
-          publishedUrls.add(postUrl);
-          persistPublishedUrls();
-          await bot.editMessageText(
-            `✅ ${account.label} (@${account.username}) videosu kanala gönderildi!`,
-            { chat_id: chatId, message_id: statusMsg?.message_id }
-          ).catch(() => {});
-          sent = true;
-          break;
+        await bot.editMessageText(`⬇️ ${account.label}: "${title.slice(0, 50)}..." indiriliyor...`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+        const filePath = await downloadTweetVideo(postUrl);
+        if (filePath) {
+          try {
+            await bot.sendVideo(CHANNEL_ID, { source: filePath }, { caption: title.slice(0, 1024), supports_streaming: true });
+            publishedUrls.add(postUrl);
+            persistPublishedUrls();
+            try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {}
+            await bot.editMessageText(`✅ ${account.label} videosu kanala gönderildi!`, { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
+            sent = true; break;
+          } catch { try { fs.rmSync(path.dirname(filePath), { recursive: true, force: true }); } catch {} }
         }
       }
-    } catch (e) {
-      console.error(`❌ X hesap hatası @${account.username}: ${e.message?.slice(0, 80)}`);
-    }
+    } catch (e) { console.error(`❌ X scan @${account.username}: ${e.message?.slice(0, 60)}`); }
   }
-
   if (!sent) {
-    await bot.editMessageText(
-      '❌ X hesaplarından video alınamadı. Hesaplar gizli olabilir veya yt-dlp yetkilendirme gerektiriyor.',
-      { chat_id: chatId, message_id: statusMsg?.message_id }
-    ).catch(() => bot.sendMessage(chatId, '❌ X video alınamadı.'));
+    await bot.editMessageText('❌ Hiçbir hesaptan yeni video bulunamadı.', { chat_id: chatId, message_id: statusMsg?.message_id }).catch(() => {});
   }
 });
 
