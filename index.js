@@ -2125,6 +2125,7 @@ async function getYtdlpStreamUrl(videoUrl) {
         '--no-warnings',
         '--no-part',
         '--socket-timeout', '15',
+        ...(YOUTUBE_COOKIES_FILE ? ['--cookies', YOUTUBE_COOKIES_FILE] : []),
         videoUrl,
       ];
       let proc;
@@ -2385,6 +2386,23 @@ async function downloadFromInvidious(videoId) {
 
 
 
+
+// ─── YouTube Cookies (Railway bot korumasını aşmak için) ──────────────────
+// Railway'de YOUTUBE_COOKIES env'e cookies.txt içeriğini base64 olarak koy
+const YOUTUBE_COOKIES_FILE = (() => {
+  const b64 = process.env.YOUTUBE_COOKIES;
+  if (!b64) return null;
+  try {
+    const decoded = Buffer.from(b64, 'base64').toString('utf8');
+    const tmpPath = '/tmp/yt_cookies.txt';
+    fs.writeFileSync(tmpPath, decoded, 'utf8');
+    console.log('✅ YouTube cookies yüklendi');
+    return tmpPath;
+  } catch (e) {
+    console.warn('⚠️ YouTube cookies yüklenemedi:', e.message);
+    return null;
+  }
+})();
 const YTDLP_BIN = (() => {
   try {
     const r = spawnSync('which', ['yt-dlp'], { encoding: 'utf8', timeout: 3000 });
@@ -2447,6 +2465,7 @@ async function downloadWithYtdlp(videoUrl, clientArg = 'android_testsuite') {
       '-o', outputTemplate,
       '--no-warnings',
       '--add-headers', 'Cookie:SOCS=CAI',
+      ...(YOUTUBE_COOKIES_FILE ? ['--cookies', YOUTUBE_COOKIES_FILE] : []),
       videoUrl,
     ];
 
@@ -3686,6 +3705,7 @@ const BOT_COMMANDS = [
   { cmd: '/filtrelerim',        icon: '📝', desc: 'Aktif filtrelerini listeler' },
   { cmd: '/filtre temizle',     icon: '🧹', desc: 'Tüm filtreleri tek seferde siler' },
   { cmd: '/video <url>',        icon: '🎬', desc: 'Verilen URL\'den video indirir ve kanala gönderir' },
+  { cmd: '/xvideo',             icon: '🐦', desc: 'Muhalif gazete X hesaplarından video çeker ve kanala gönderir' },
   { cmd: '/myid',               icon: '🪪', desc: 'Kendi Telegram Chat ID\'ini gösterir' },
   { cmd: '/yorum',              icon: '💬', desc: 'Editörlere yorum veya görüş iletir' },
   { cmd: '/dur',                icon: '⏸', desc: 'Otomatik yayını duraklatır (sadece admin)' },
@@ -4680,6 +4700,106 @@ bot.onText(/\/video/, async (msg) => {
 
   if (!sent) {
     await bot.sendMessage(msg.chat.id, '⚠️ Hiçbir kaynaktan video bulunamadı. YouTube bot koruması veya haberlerde video yok.');
+  }
+});
+
+// ─── /xvideo — Muhalif gazete X (Twitter) hesaplarından video çek ────────────
+const X_ACCOUNTS = [
+  { username: 'gazetesozcu',    label: 'Sözcü' },
+  { username: 'cumhuriyetgzt',  label: 'Cumhuriyet' },
+  { username: 't24comtr',       label: 'T24' },
+  { username: 'halktv',         label: 'Halk TV' },
+  { username: 'birgungazetesi', label: 'BirGün' },
+  { username: 'odatv',          label: 'OdaTV' },
+  { username: 'gazeteDuvar',    label: 'Gazete Duvar' },
+  { username: 'tele1tv',        label: 'Tele1' },
+];
+
+async function fetchXAccountVideos(username) {
+  const url = `https://x.com/${username}`;
+  return new Promise((resolve) => {
+    const args = [
+      url,
+      '--playlist-items', '1-15',
+      '--quiet',
+      '--no-warnings',
+      '--dump-json',
+      '--flat-playlist',
+      '--no-check-certificate',
+      '--socket-timeout', '20',
+    ];
+    let proc;
+    try { proc = spawn(YTDLP_BIN, args); } catch { resolve([]); return; }
+    let stdout = '';
+    proc.stdout.on('data', d => { stdout += d; });
+    const killTimer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve([]); }, 35000);
+    proc.on('error', () => { clearTimeout(killTimer); resolve([]); });
+    proc.on('close', () => {
+      clearTimeout(killTimer);
+      const entries = [];
+      for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line.trim());
+          if (e && e.webpage_url) entries.push(e);
+        } catch {}
+      }
+      resolve(entries);
+    });
+  });
+}
+
+bot.onText(/\/xvideo/, async (msg) => {
+  if (!isAdmin(msg.chat.id)) return;
+  const chatId = msg.chat.id;
+  const statusMsg = await bot.sendMessage(chatId, '🐦 X hesaplarında video aranıyor...').catch(() => null);
+
+  let sent = false;
+  for (const account of X_ACCOUNTS) {
+    if (sent) break;
+    try {
+      await bot.editMessageText(
+        `🐦 @${account.username} (${account.label}) taranıyor...`,
+        { chat_id: chatId, message_id: statusMsg?.message_id }
+      ).catch(() => {});
+
+      const entries = await fetchXAccountVideos(account.username);
+
+      for (const entry of entries.slice(0, 8)) {
+        const postUrl = entry.webpage_url || entry.url;
+        if (!postUrl) continue;
+        if (publishedUrls.has(postUrl)) continue;
+        const rawTitle = (entry.title || entry.description || '').replace(/https?:\/\/\S+/g, '').trim();
+        const title = cleanTitle(rawTitle).slice(0, 200) || `${account.label} videosu`;
+        if (isTitleDuplicate(title)) continue;
+
+        await bot.editMessageText(
+          `⬇️ ${account.label}: "${title.slice(0, 60)}..." indiriliyor...`,
+          { chat_id: chatId, message_id: statusMsg?.message_id }
+        ).catch(() => {});
+
+        const ok = await sendYouTubeVideoSmart(CHANNEL_ID, postUrl, title.slice(0, 1024));
+        if (ok) {
+          publishedUrls.add(postUrl);
+          persistPublishedUrls();
+          await bot.editMessageText(
+            `✅ ${account.label} (@${account.username}) videosu kanala gönderildi!`,
+            { chat_id: chatId, message_id: statusMsg?.message_id }
+          ).catch(() => {});
+          sent = true;
+          break;
+        }
+      }
+    } catch (e) {
+      console.error(`❌ X hesap hatası @${account.username}: ${e.message?.slice(0, 80)}`);
+    }
+  }
+
+  if (!sent) {
+    await bot.editMessageText(
+      '❌ X hesaplarından video alınamadı. Hesaplar gizli olabilir veya yt-dlp yetkilendirme gerektiriyor.',
+      { chat_id: chatId, message_id: statusMsg?.message_id }
+    ).catch(() => bot.sendMessage(chatId, '❌ X video alınamadı.'));
   }
 });
 
