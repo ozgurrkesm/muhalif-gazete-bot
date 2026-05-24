@@ -3570,6 +3570,17 @@ async function checkBreakingNews() {
           const ogMeta = await fetchOgMeta(realUrl).catch(() => ({}));
           const bestD = ogMeta.description || rawDesc || '';
           const aiS = await summarizeNews(title, bestD, ogMeta.articleBody || null);
+
+          // ── İçerik kalite filtresi: detaysız / boş haberler atlanıyor ──────
+          const hasRealContent = (bestD.trim().length >= 80) || (ogMeta.articleBody && ogMeta.articleBody.trim().length >= 100);
+          const aiSMeaningful = !!(aiS && aiS.trim().length >= 60);
+          if (!hasRealContent && !aiSMeaningful) {
+            console.log(`⛔ Son dakika detaysız atlandı: ${title.slice(0, 70)}`);
+            breakingPublishedUrls.delete(url);
+            continue;
+          }
+          // ────────────────────────────────────────────────────────────────────
+
           caption = stripLinks(`🚨 SON DAKİKA\n\n${catEmoji}${title}`);
           // Özet başlıkla aynı veya çok benzerse ekleme (Google News RSS'te sık karşılaşılan durum)
           if (aiS && aiS.length > 5) {
