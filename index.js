@@ -1154,9 +1154,21 @@ function cleanArrows(text) {
 function stripSourceDate(text) {
   if (!text) return text;
   return text
+    // "Kaynak: ..." kalıpları
     .replace(/kaynak\s*:\s*[^\n,]{2,40}(?:,\s*\d{1,2}\s+\w+\s+\d{4})?\s*\.?/gi, '')
-    .replace(/\b\d{1,2}\s+(Ocak|\u015eubat|Mart|Nisan|May\u0131s|Haziran|Temmuz|A\u011fustos|Eyl\u00fcl|Ekim|Kas\u0131m|Aral\u0131k)\s+\d{4}\b[,.]?\s*/gi, '')
-    .replace(/\(\s*\d{1,2}\s+\w+\s+\d{4}[^)]*\)/gi, '')
+    // Parantez içindeki tarih: (15 Mayıs 2024) veya (Kaynak, 15 Mayıs 2024)
+    .replace(/\([^)]{0,60}\d{1,2}\s+(Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\s+\d{4}[^)]*\)/gi, '')
+    // Satırda yalnız tarih: 15 Mayıs 2024
+    .replace(/\b\d{1,2}\s+(Ocak|Şubat|Mart|Nisan|Mayıs|Haziran|Temmuz|Ağustos|Eylül|Ekim|Kasım|Aralık)\s+\d{4}\b[,.]?\s*/gi, '')
+    // Parantez içinde tek kaynak adı: (Sözcü), (DHA), (AA), (Reuters) vb.
+    .replace(/\(\s*[A-ZÇĞİÖŞÜa-zçğışöüA-Z][^\d()]{1,30}\s*\)/g, '')
+    // "— Kaynak" veya "- Kaynak" satır sonu ekleri
+    .replace(/\s*[—\-–]\s*[A-ZÇĞİÖŞÜ][a-zçğışöü\s]{1,25}\.?\s*$/gm, '')
+    // Artakalan boş parantez, virgül+parantez, noktalı virgül+parantez
+    .replace(/[,(;]\s*\)/g, '')
+    .replace(/\(\s*[,;]?\s*\)/g, '')
+    // Satır sonu fazla noktalama temizle: , veya ; ile biten satır
+    .replace(/[,;]\s*$/gm, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
 }
