@@ -3100,8 +3100,8 @@ let publishNowStartTime = 0;
 
 
   // ── YouTube haberi ──────────────────────────────────────────────────────────
-  // ── Normal haber — medyalı öğe bul (max 10 deneme) ────────────────────────
-  const MAX_TRIES = 6;
+  // ── Normal haber — medyalı öğe bul (kısa aralıkta daha az deneme = daha hızlı) ────────────────────────
+  const MAX_TRIES = (settings.intervalMinutes || 1) <= 2 ? 3 : 6;
   let chosenItem = null;
   let chosenMedia = { type: null, url: null };
   let chosenMedia2 = null;
@@ -3807,12 +3807,28 @@ async function checkBreakingNews() {
   let publishInterval = null;
 
   function resetInterval() {
-    if (publishInterval) clearInterval(publishInterval);
+    if (publishInterval) clearTimeout(publishInterval);
+    publishInterval = null;
+
     const intervalMs = (settings.intervalMinutes || 1) * 60 * 1000;
-    publishInterval = setInterval(() => {
-      publishNextNews().catch(e => console.error('⚠️ Zamanlayıcı hata:', e.message));
-    }, intervalMs);
     console.log(`⏱ Zamanlayıcı kuruldu: her ${settings.intervalMinutes} dakikada bir haber`);
+
+    async function scheduleNext() {
+      if (publishInterval === null && settings.paused) {
+        // Bot duraklatıldı, 5sn sonra tekrar kontrol et
+        publishInterval = setTimeout(scheduleNext, 5000);
+        return;
+      }
+      const start = Date.now();
+      await publishNextNews().catch(e => console.error('⚠️ Zamanlayıcı hata:', e.message));
+      const elapsed = Date.now() - start;
+      const remaining = Math.max(0, intervalMs - elapsed);
+      publishInterval = setTimeout(scheduleNext, remaining);
+      if (remaining < 1000) console.log(`⚡ Hız modu: bir sonraki haber hemen hazırlanıyor`);
+    }
+
+    // İlk yayın hemen değil, intervalMs sonra başlasın
+    publishInterval = setTimeout(scheduleNext, intervalMs);
   }
 
   function startBreakingNewsChecker() {
