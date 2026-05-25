@@ -3052,70 +3052,74 @@ let publishNowStartTime = 0;
     return;
   }
 
-  // Bir feed boş gelirse sıradakine geç — aktif kategorideki tüm feedleri dene
+  // TÜM feedleri paralel çek — 5 değil hepsi aynı anda
   const needed = getNeededMediaType();
-  let feed, items, validItems;
-  // Her çağrıda pool'u karıştır — aynı kaynak hep ilk seçilmesin
+  let validItems;
   const activePool = [...getActivePool()].sort(() => Math.random() - 0.5);
 
-  const maxTry = Math.min(5, activePool.length);
-  // Feedleri paralel çek — sıralı bekleme yerine hepsi aynı anda başlasın
-  const feedBatch = activePool.slice(0, maxTry);
-  console.log(`📡 ${feedBatch.length} feed paralel çekiliyor... (kategori: ${settings.activeCategory})`);
+  console.log(`📡 ${activePool.length} feed paralel çekiliyor... (kategori: ${settings.activeCategory})`);
   const batchResults = await Promise.allSettled(
-    feedBatch.map(f => fetchFeed(f).then(its => ({ feed: f, items: its })))
+    activePool.map(f => fetchFeed(f).then(its => ({ feed: f, items: its })))
   );
+
+  // Tüm feedlerden geçerli haberleri topla, en yenisini öne al
+  const allValidItems = [];
   for (const res of batchResults) {
     if (res.status !== 'fulfilled') continue;
-    feed = res.value.feed;
-    items = res.value.items;
-    const withUrl = items.filter((a) => a.link || a.guid);
+    const f = res.value.feed;
+    const its = res.value.items || [];
+    const withUrl = its.filter((a) => a.link || a.guid);
     const notPublished = withUrl.filter((a) => {
       const itemUrl = a.link || a.guid;
       if (publishedUrls.has(itemUrl)) return false;
-      // Başlık kontrolü — farklı URL ama aynı haber olmasın
       const norm = normalizeTitle(a.title);
       if (publishedTitlesSession.has(norm)) {
-        // Bu URL'yi de blokla ki bir daha gelmesin
         publishedUrls.add(itemUrl);
         return false;
       }
       return true;
     });
     const valid = notPublished.filter((a) => {
-      if (!isValidNewsItem(a, feed)) return false;
-      if (settings.activeCategory !== 'hepsi' && feed.category === settings.activeCategory) return true;
+      if (!isValidNewsItem(a, f)) return false;
+      if (settings.activeCategory !== 'hepsi' && f.category === settings.activeCategory) return true;
       const desc = a.contentSnippet || a.summary || a.content || a.description || '';
       return matchesActiveCategory(a.title, desc, settings.activeCategory);
     });
-    console.log(`🔎 ${feed.source}: toplam=${items.length} yeni=${notPublished.length} geçerli=${valid.length}`);
-    validItems = sortByNeededMedia(valid, needed);
-    if (validItems.length > 0) { break; }
+    if (valid.length > 0) {
+      console.log(`🔎 ${f.source}: ${valid.length} geçerli haber`);
+      valid.forEach(v => allValidItems.push({ item: v, feed: f }));
+    }
   }
-  // shuffle zaten rotasyonu sağlar
-  if (!validItems || validItems.length === 0) {
-    console.log(`ℹ️ Tüm feedler denendi, yeni haber bulunamadı.`);
+
+  if (allValidItems.length === 0) {
+    console.log(`ℹ️ Tüm ${activePool.length} feedde yeni haber bulunamadı.`);
     return;
   }
 
 
-  // ── YouTube haberi ──────────────────────────────────────────────────────────
-  // ── Normal haber — medyalı öğe bul (kısa aralıkta daha az deneme = daha hızlı) ────────────────────────
+  // ── Tüm geçerli haberlerden medyalıyı bul (kısa aralıkta 3, uzunda 6 deneme) ──
+  // allValidItems: [{item, feed}] — tüm feedlerden toplanan haberler
+  const sortedAll = sortByNeededMedia(allValidItems.map(x => x.item), needed);
+  // feed bilgisini geri eşle
+  const sortedWithFeed = sortedAll.map(item => allValidItems.find(x => x.item === item) || { item, feed: allValidItems[0].feed });
+
   const MAX_TRIES = (settings.intervalMinutes || 1) <= 2 ? 3 : 6;
   let chosenItem = null;
+  let chosenFeed = null;
   let chosenMedia = { type: null, url: null };
   let chosenMedia2 = null;
   let chosenOgDesc = null;
   let chosenArticleBody = null;
-  let chosenCandidateUrl = null; // Çözülmüş asıl URL (Google News decode sonrası)
-  let textFallbackItem = null;   // Medya bulunamazsa metin olarak gönderilecek ilk geçerli haber
+  let chosenCandidateUrl = null;
+  let textFallbackItem = null;
+  let textFallbackFeed = null;
 
-  for (let i = 0; i < Math.min(MAX_TRIES, validItems.length); i++) {
-    const candidate = validItems[i];
+  for (let i = 0; i < Math.min(MAX_TRIES, sortedWithFeed.length); i++) {
+    const { item: candidate, feed: candidateFeed } = sortedWithFeed[i];
     const rawCandidateUrl = candidate.link || candidate.guid;
 
     // İlk geçerli haberi metin fallback olarak sakla
-    if (!textFallbackItem) textFallbackItem = candidate;
+    if (!textFallbackItem) { textFallbackItem = candidate; textFallbackFeed = candidateFeed; }
 
     // Google News URL'lerini önce decode et
     let candidateUrl = rawCandidateUrl;
@@ -3172,6 +3176,7 @@ let publishNowStartTime = 0;
 
     if (media.url) {
       chosenItem = candidate;
+      chosenFeed = candidateFeed;
       chosenMedia = media;
       chosenCandidateUrl = candidateUrl;
       break;
@@ -3181,15 +3186,17 @@ let publishNowStartTime = 0;
   // Medya bulunamazsa ilk geçerli haberi metin olarak gönder (atlamak yerine)
   if (!chosenMedia.url) {
     if (!textFallbackItem) {
-      console.log(`⏭ [${feed.source}] Haber bulunamadı, atlanıyor.`);
+      console.log(`⏭ Haber bulunamadı, atlanıyor.`);
       return;
     }
-    console.log(`📝 [${feed.source}] Medya yok — metin olarak gönderiliyor.`);
+    console.log(`📝 [${textFallbackFeed?.source}] Medya yok — metin olarak gönderiliyor.`);
     chosenItem = textFallbackItem;
+    chosenFeed = textFallbackFeed;
     chosenCandidateUrl = textFallbackItem.link || textFallbackItem.guid;
   }
 
   if (!chosenItem) return;
+  const feed = chosenFeed || allValidItems[0]?.feed;
 
   const url = chosenItem.link || chosenItem.guid;
   const { title: checkTitle2 } = buildItemMeta(chosenItem, feed);
