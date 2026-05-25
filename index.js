@@ -1853,19 +1853,11 @@ const BLOCKED_TITLE_PATTERNS = [
   /\b(uygulama|app)\s+(güncellendi|yayınlandı|indir)/i,
   /\b(yapay zeka|chatgpt|gemini|copilot).*(dene|nasıl kullan|pratik|ipucu|özellik)/i,
 
-  // ─── Hükümet propagandası / tarafsız sunulan iktidar haberleri ────────────
-  /\bcumhurbaşkanı(nın|ndan)?\s+(müjde|açıkladı|duyurdu|talimat verdi|imzaladı)/i,
-  /\b(bakan|bakanlık)\s+(müjde|duyurdu|açıkladı)\b(?!.*eleştiri|.*tepki|.*skandal)/i,
-  /\b(yatırım paketi|kalkınma planı|büyüme hedefi)\s+(açıklandı|duyuruldu|belirlendi)/i,
-  /\bhükümet(in|ten|e)?\s+(başarı|rekor|lider|güçlü)/i,
-  /\b(ekonomi|büyüme).*(rekor|güçlü|lider|örnek)\b(?!.*rağmen|.*oysa|.*aslında)/i,
-  /\bTürkiye\s+(lider|güçlü|rekor).*(ekonomi|ihracat|büyüme)/i,
-
   // ─── Yaşam tarzı / magazin benzeri içerikler ──────────────────────────────
-  /\b(moda|trend|stil|kombin|kıyafet|aksesuar|güzellik|makyaj|cilt bakım)/i,
-  /\b(tatilinizi|seyahatinizi|gezginler için|en güzel (yer|plaj|otel|destinasyon))/i,
-  /\b(burç|astroloji|fal|tarot|ruh hali|enerji yüksek)/i,
-  /\b(pasta|kek|börek|tatlı|çorba|salata|yemek tarifi|tarifini)\s+(yapım|nasıl|hazırlayın)/i,
+  /\b(kombin|kıyafet önerisi|aksesuar önerisi|makyaj tüyoları|cilt bakım rutini)/i,
+  /\b(tatilinizi|seyahatinizi|gezginler için|en güzel (plaj|otel|destinasyon))\b/i,
+  /\b(burç|astroloji|fal|tarot)\b/i,
+  /\b(pasta|kek|börek|çorba|salata|yemek tarifi|tarifini)\s+(yapım|nasıl|hazırlayın)/i,
 ];
 
 function isRecentNews(item) {
