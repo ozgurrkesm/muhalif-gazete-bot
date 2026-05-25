@@ -479,6 +479,71 @@ const RSS_FEEDS = [
     type: 'google',
     category: 'video',
   },
+
+  // ── Türkiye'nin kötü durumu — ekonomik/sosyal kriz kaynakları ───────────────
+  {
+    url: 'https://news.google.com/rss/search?q=enflasyon+OR+zam+OR+geçim+sıkıntısı+OR+yoksulluk+site:sozcu.com.tr+OR+site:cumhuriyet.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '💸 Ekonomik Kriz (Muhalif)',
+    source: 'Muhalif Ekonomi',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=işsizlik+OR+asgari+ücret+OR+açlık+sınırı+OR+yoksulluk+sınırı&hl=tr&gl=TR&ceid=TR:tr',
+    label: '📉 İşsizlik & Yoksulluk',
+    source: 'İşsizlik',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=kira+artışı+OR+konut+krizi+OR+kiracı+mağdur+OR+ev+bulamıyor&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🏠 Konut Krizi',
+    source: 'Konut Krizi',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=sağlık+krizi+OR+hastane+OR+ilaç+bulunamıyor+OR+doktor+istifası+site:cumhuriyet.com.tr+OR+site:bianet.org+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🏥 Sağlık Krizi',
+    source: 'Sağlık',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=yolsuzluk+OR+rüşvet+OR+ihale+OR+kayırma+OR+torpil+site:cumhuriyet.com.tr+OR+site:sozcu.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚖️ Yolsuzluk & İhale',
+    source: 'Yolsuzluk',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=eğitim+krizi+OR+öğrenci+OR+üniversite+kpss+OR+öğretmen+ataması+site:cumhuriyet.com.tr+OR+site:t24.com.tr+OR+site:bianet.org&hl=tr&gl=TR&ceid=TR:tr',
+    label: '📚 Eğitim Krizi',
+    source: 'Eğitim',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=basın+özgürlüğü+OR+gazeteci+tutuklu+OR+sosyal+medya+yasağı+OR+ifade+özgürlüğü+site:bianet.org+OR+site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr',
+    label: '🗽 Basın & İfade Özgürlüğü',
+    source: 'Basın Özgürlüğü',
+    type: 'google',
+    category: 'genel',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=futbol+rüşvet+OR+TFF+skandal+OR+hakem+skandal+OR+şike+OR+şiddet+stadyum&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Spor Skandal',
+    source: 'Spor Skandal',
+    type: 'google',
+    category: 'spor',
+  },
+  {
+    url: 'https://news.google.com/rss/search?q=milli+takım+OR+süper+lig+OR+transfer+borcları+OR+kulüp+iflas+OR+futbolcu+mağdur&hl=tr&gl=TR&ceid=TR:tr',
+    label: '⚽ Spor Gerçeği',
+    source: 'Spor Gerçeği',
+    type: 'google',
+    category: 'spor',
+  },
 ];
 
 const CATEGORY_LABELS = {
@@ -1778,7 +1843,29 @@ const BLOCKED_TITLE_PATTERNS = [
   /\b(eğitime|üretime|faaliyete)\s+devam\s+edecek\s+m[ıiuü]\?/i,
   /\b(ne zaman|nerede|nasıl|kim oldu|kaçta|hangi gün|neden|niçin)\b.*\?$/i,
   // Çift soru işaretli başlıklar: "X mi? Y mi?" tipi
-  /\?[^?]{0,60}\?\s*$/
+  /\?[^?]{0,60}\?\s*$/,
+
+  // ─── Teknoloji / gadget / ürün tanıtım filtresi ────────────────────────────
+  /\b(inceleme|review|test ettik|kullandık|denedik)\b.*(telefon|laptop|tablet|kulaklık|saat|kamera|tv|ekran)/i,
+  /\b(en iyi|en ucuz|satın alma|fiyat karşılaştır).*(telefon|laptop|tablet|uygulama|yazılım)/i,
+  /\b(lansman|tanıtım|duyuruldu|piyasaya çıktı).*(iphone|samsung|xiaomi|huawei|apple|google pixel)/i,
+  /\byeni (iphone|samsung galaxy|pixel|macbook|ipad|airpods|galaxy buds)/i,
+  /\b(uygulama|app)\s+(güncellendi|yayınlandı|indir)/i,
+  /\b(yapay zeka|chatgpt|gemini|copilot).*(dene|nasıl kullan|pratik|ipucu|özellik)/i,
+
+  // ─── Hükümet propagandası / tarafsız sunulan iktidar haberleri ────────────
+  /\bcumhurbaşkanı(nın|ndan)?\s+(müjde|açıkladı|duyurdu|talimat verdi|imzaladı)/i,
+  /\b(bakan|bakanlık)\s+(müjde|duyurdu|açıkladı)\b(?!.*eleştiri|.*tepki|.*skandal)/i,
+  /\b(yatırım paketi|kalkınma planı|büyüme hedefi)\s+(açıklandı|duyuruldu|belirlendi)/i,
+  /\bhükümet(in|ten|e)?\s+(başarı|rekor|lider|güçlü)/i,
+  /\b(ekonomi|büyüme).*(rekor|güçlü|lider|örnek)\b(?!.*rağmen|.*oysa|.*aslında)/i,
+  /\bTürkiye\s+(lider|güçlü|rekor).*(ekonomi|ihracat|büyüme)/i,
+
+  // ─── Yaşam tarzı / magazin benzeri içerikler ──────────────────────────────
+  /\b(moda|trend|stil|kombin|kıyafet|aksesuar|güzellik|makyaj|cilt bakım)/i,
+  /\b(tatilinizi|seyahatinizi|gezginler için|en güzel (yer|plaj|otel|destinasyon))/i,
+  /\b(burç|astroloji|fal|tarot|ruh hali|enerji yüksek)/i,
+  /\b(pasta|kek|börek|tatlı|çorba|salata|yemek tarifi|tarifini)\s+(yapım|nasıl|hazırlayın)/i,
 ];
 
 function isRecentNews(item) {
@@ -2661,7 +2748,11 @@ function getActiveFeed() {
 // Aktif kategorinin feed listesini döndür (döngü sayacı için)
 function getActivePool() {
   const cat = settings.activeCategory;
-  if (cat === 'hepsi') return RSS_FEEDS;
+  if (cat === 'hepsi') {
+    // 'hepsi' modunda teknoloji/video kategorileri hariç — muhalif + spor + ekonomi ön planda
+    const priority = RSS_FEEDS.filter(f => ['genel', 'politika', 'spor', 'ekonomi', 'dunya'].includes(f.category));
+    return priority.length > 0 ? priority : RSS_FEEDS;
+  }
   const exact = RSS_FEEDS.filter((f) => f.category === cat);
   const general = RSS_FEEDS.filter((f) => f.category === 'genel');
   // Hem kategori feedleri hem genel feedler — genel feedlerde keyword filtresi uygulanır
