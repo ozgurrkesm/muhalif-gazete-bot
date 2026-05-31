@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.29 — yabancı mutfak/lezzet/yemek filtresi güçlendirildi + içerik bazlı filtre — 2026-05-31');
+console.log('🤖 Bot v2.30 — orijinal tabandan yeniden inşa: yemek/burç/mutfak/asayis/yolsuzluk — 2026-05-31');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -250,252 +250,48 @@ async function tgLog(text) {
 
 const RSS_FEEDS = [
     // ── Muhalif / Bağımsız Haber Kaynakları ──────────────────────────────────
-    {
-      url: 'https://news.google.com/rss/search?q=ANKA+ajans+haber&hl=tr&gl=TR&ceid=TR:tr',
-      label: '📡 ANKA Ajans',
-      source: 'ANKA',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://www.cumhuriyet.com.tr/rss',
-      label: '🗞 Cumhuriyet',
-      source: 'Cumhuriyet',
-      type: 'direct',
-      category: 'genel',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🗞 Sözcü',
-      source: 'Sözcü',
-      type: 'google',
-      category: 'genel',
-    },
-    {
-      url: 'https://halktv.com.tr/export/rss',
-      label: '📺 Halk TV',
-      source: 'Halk TV',
-      type: 'direct',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:krttv.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '📺 KRT TV',
-      source: 'KRT TV',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🗞 T24',
-      source: 'T24',
-      type: 'google',
-      category: 'genel',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🗞 Gazete Duvar',
-      source: 'Gazete Duvar',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://www.birgun.net/rss',
-      label: '🗞 BirGün',
-      source: 'BirGün',
-      type: 'direct',
-      category: 'politika',
-    },
-    {
-      url: 'https://www.odatv.com/rss.xml',
-      label: '🗞 OdaTV',
-      source: 'OdaTV',
-      type: 'direct',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:tele1.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '📺 Tele1',
-      source: 'Tele1',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://artigercek.com/feed',
-      label: '🗞 Artı Gerçek',
-      source: 'Artı Gerçek',
-      type: 'direct',
-      category: 'politika',
-    },
-    {
-      url: 'https://bianet.org/rss/bianet',
-      label: '🗞 Bianet',
-      source: 'Bianet',
-      type: 'direct',
-      category: 'genel',
-    },
+    { url: 'https://news.google.com/rss/search?q=ANKA+ajans+haber&hl=tr&gl=TR&ceid=TR:tr', label: '📡 ANKA Ajans', source: 'ANKA', type: 'google', category: 'politika' },
+    { url: 'https://www.cumhuriyet.com.tr/rss', label: '🗞 Cumhuriyet', source: 'Cumhuriyet', type: 'direct', category: 'genel' },
+    { url: 'https://news.google.com/rss/search?q=site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '🗞 Sözcü', source: 'Sözcü', type: 'google', category: 'genel' },
+    { url: 'https://halktv.com.tr/export/rss', label: '📺 Halk TV', source: 'Halk TV', type: 'direct', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=site:krttv.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '📺 KRT TV', source: 'KRT TV', type: 'google', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '🗞 T24', source: 'T24', type: 'google', category: 'genel' },
+    { url: 'https://news.google.com/rss/search?q=site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '🗞 Gazete Duvar', source: 'Gazete Duvar', type: 'google', category: 'politika' },
+    { url: 'https://www.birgun.net/rss', label: '🗞 BirGün', source: 'BirGün', type: 'direct', category: 'politika' },
+    { url: 'https://www.odatv.com/rss.xml', label: '🗞 OdaTV', source: 'OdaTV', type: 'direct', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=site:tele1.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '📺 Tele1', source: 'Tele1', type: 'google', category: 'politika' },
+    { url: 'https://artigercek.com/feed', label: '🗞 Artı Gerçek', source: 'Artı Gerçek', type: 'direct', category: 'politika' },
+    { url: 'https://bianet.org/rss/bianet', label: '🗞 Bianet', source: 'Bianet', type: 'direct', category: 'genel' },
     // ── Son Dakika ─────────────────────────────────────────────────────────────
-    {
-      url: 'https://www.ntv.com.tr/son-dakika.rss',
-      label: '📺 NTV Son Dakika',
-      source: 'NTV',
-      type: 'direct',
-      category: 'sondakika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=son+dakika+Türkiye&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🔴 Son Dakika',
-      source: 'Google Son Dakika',
-      type: 'google',
-      category: 'sondakika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:dha.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '📡 DHA',
-      source: 'DHA',
-      type: 'google',
-      category: 'sondakika',
-    },
+    { url: 'https://www.ntv.com.tr/son-dakika.rss', label: '📺 NTV Son Dakika', source: 'NTV', type: 'direct', category: 'sondakika' },
+    { url: 'https://news.google.com/rss/search?q=son+dakika+Türkiye&hl=tr&gl=TR&ceid=TR:tr', label: '🔴 Son Dakika', source: 'Google Son Dakika', type: 'google', category: 'sondakika' },
+    { url: 'https://news.google.com/rss/search?q=site:dha.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '📡 DHA', source: 'DHA', type: 'google', category: 'sondakika' },
     // ── Siyaset ────────────────────────────────────────────────────────────────
-    {
-      url: 'https://news.google.com/rss/search?q=AKP+OR+Erdoğan+OR+hükümet+muhalefet&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🏛 Siyaset Haberleri',
-      source: 'Google Siyaset',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=CHP+OR+meclis+OR+muhalefet+OR+iktidar+site:cumhuriyet.com.tr+OR+site:sozcu.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🏛 Meclis & Siyaset (Muhalif)',
-      source: 'Muhalif Siyaset',
-      type: 'google',
-      category: 'politika',
-    },
+    { url: 'https://news.google.com/rss/search?q=AKP+OR+Erdoğan+OR+hükümet+muhalefet&hl=tr&gl=TR&ceid=TR:tr', label: '🏛 Siyaset Haberleri', source: 'Google Siyaset', type: 'google', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=CHP+OR+meclis+OR+muhalefet+site:cumhuriyet.com.tr+OR+site:sozcu.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '🏛 Meclis & Siyaset', source: 'Muhalif Siyaset', type: 'google', category: 'politika' },
     // ── AKP Yolsuzlukları & İktidar Skandalları ───────────────────────────────
-    {
-      url: 'https://news.google.com/rss/search?q=yolsuzluk+OR+rüşvet+OR+ihale+yolsuzluğu+OR+zimmet&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚖️ Yolsuzluk & Rüşvet',
-      source: 'Yolsuzluk',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=AKP+yolsuzluk+OR+AKP+rüşvet+OR+AKP+skandal+OR+ihale+usulsüzlük&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚖️ AKP Skandalları',
-      source: 'AKP Skandal',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=kayırma+OR+torpil+OR+kamu+ihalesi+usulsüz+OR+devlet+zimmet+site:cumhuriyet.com.tr+OR+site:t24.com.tr+OR+site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚖️ İhale & Kayırma',
-      source: 'İhale Skandal',
-      type: 'google',
-      category: 'politika',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=belediye+yolsuzluk+OR+belediye+zimmet+OR+AKP+belediye+skandal&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚖️ Belediye Yolsuzlukları',
-      source: 'Belediye Skandal',
-      type: 'google',
-      category: 'politika',
-    },
+    { url: 'https://news.google.com/rss/search?q=yolsuzluk+OR+rüşvet+OR+ihale+yolsuzluğu+OR+zimmet&hl=tr&gl=TR&ceid=TR:tr', label: '⚖️ Yolsuzluk & Rüşvet', source: 'Yolsuzluk', type: 'google', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=AKP+yolsuzluk+OR+AKP+rüşvet+OR+AKP+skandal+OR+ihale+usulsüzlük&hl=tr&gl=TR&ceid=TR:tr', label: '⚖️ AKP Skandalları', source: 'AKP Skandal', type: 'google', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=kayırma+OR+torpil+OR+kamu+ihalesi+usulsüz+site:cumhuriyet.com.tr+OR+site:t24.com.tr+OR+site:sozcu.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '⚖️ İhale & Kayırma', source: 'İhale Skandal', type: 'google', category: 'politika' },
+    { url: 'https://news.google.com/rss/search?q=belediye+yolsuzluk+OR+belediye+zimmet+OR+AKP+belediye+skandal&hl=tr&gl=TR&ceid=TR:tr', label: '⚖️ Belediye Yolsuzlukları', source: 'Belediye Skandal', type: 'google', category: 'politika' },
     // ── Suç & Asayiş Haberleri ─────────────────────────────────────────────────
-    {
-      url: 'https://news.google.com/rss/search?q=cinayet+OR+öldürüldü+OR+katledildi+Türkiye&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🚨 Cinayet Haberleri',
-      source: 'Cinayet',
-      type: 'google',
-      category: 'asayis',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=kavga+OR+dövüldü+OR+saldırıya+uğradı+OR+bıçaklandı+Türkiye&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🚨 Kavga & Saldırı',
-      source: 'Asayiş',
-      type: 'google',
-      category: 'asayis',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=gözaltı+OR+tutuklama+OR+polis+operasyon+OR+jandarma+operasyon&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🚔 Operasyon & Gözaltı',
-      source: 'Polis',
-      type: 'google',
-      category: 'asayis',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=dolandırıcılık+OR+sahte+OR+vurguncu+OR+siber+suç&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🚨 Dolandırıcılık & Vurgun',
-      source: 'Dolandırıcılık',
-      type: 'google',
-      category: 'asayis',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=uyuşturucu+operasyon+OR+uyuşturucu+ele+geçirildi+OR+trafik+kazası+ölü&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🚨 Uyuşturucu & Kaza',
-      source: 'Asayiş 2',
-      type: 'google',
-      category: 'asayis',
-    },
+    { url: 'https://news.google.com/rss/search?q=cinayet+OR+öldürüldü+OR+katledildi+Türkiye&hl=tr&gl=TR&ceid=TR:tr', label: '🚨 Cinayet Haberleri', source: 'Cinayet', type: 'google', category: 'asayis' },
+    { url: 'https://news.google.com/rss/search?q=kavga+OR+dövüldü+OR+saldırıya+uğradı+OR+bıçaklandı+Türkiye&hl=tr&gl=TR&ceid=TR:tr', label: '🚨 Kavga & Saldırı', source: 'Asayiş', type: 'google', category: 'asayis' },
+    { url: 'https://news.google.com/rss/search?q=gözaltı+OR+tutuklama+OR+polis+operasyon+OR+jandarma+operasyon&hl=tr&gl=TR&ceid=TR:tr', label: '🚔 Operasyon & Gözaltı', source: 'Polis', type: 'google', category: 'asayis' },
+    { url: 'https://news.google.com/rss/search?q=dolandırıcılık+OR+sahte+OR+vurguncu+OR+siber+suç&hl=tr&gl=TR&ceid=TR:tr', label: '🚨 Dolandırıcılık & Vurgun', source: 'Dolandırıcılık', type: 'google', category: 'asayis' },
+    { url: 'https://news.google.com/rss/search?q=uyuşturucu+operasyon+OR+uyuşturucu+ele+geçirildi+OR+trafik+kazası+ölü&hl=tr&gl=TR&ceid=TR:tr', label: '🚨 Uyuşturucu & Kaza', source: 'Asayiş 2', type: 'google', category: 'asayis' },
     // ── Ekonomik Kriz & Sosyal Sorunlar ───────────────────────────────────────
-    {
-      url: 'https://news.google.com/rss/search?q=enflasyon+OR+zam+OR+geçim+sıkıntısı+OR+yoksulluk+site:sozcu.com.tr+OR+site:cumhuriyet.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '💸 Ekonomik Kriz (Muhalif)',
-      source: 'Muhalif Ekonomi',
-      type: 'google',
-      category: 'genel',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=işsizlik+OR+asgari+ücret+OR+açlık+sınırı+OR+yoksulluk+sınırı&hl=tr&gl=TR&ceid=TR:tr',
-      label: '📉 İşsizlik & Yoksulluk',
-      source: 'İşsizlik',
-      type: 'google',
-      category: 'genel',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=basın+özgürlüğü+OR+gazeteci+tutuklu+OR+sosyal+medya+yasağı+site:bianet.org+OR+site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '🗽 Basın & İfade Özgürlüğü',
-      source: 'Basın Özgürlüğü',
-      type: 'google',
-      category: 'genel',
-    },
+    { url: 'https://news.google.com/rss/search?q=enflasyon+OR+zam+OR+geçim+sıkıntısı+OR+yoksulluk+site:sozcu.com.tr+OR+site:cumhuriyet.com.tr+OR+site:t24.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '💸 Ekonomik Kriz', source: 'Muhalif Ekonomi', type: 'google', category: 'genel' },
+    { url: 'https://news.google.com/rss/search?q=işsizlik+OR+asgari+ücret+OR+açlık+sınırı+OR+yoksulluk+sınırı&hl=tr&gl=TR&ceid=TR:tr', label: '📉 İşsizlik & Yoksulluk', source: 'İşsizlik', type: 'google', category: 'genel' },
+    { url: 'https://news.google.com/rss/search?q=basın+özgürlüğü+OR+gazeteci+tutuklu+OR+sosyal+medya+yasağı+site:bianet.org+OR+site:gazeteduvar.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '🗽 Basın & İfade Özgürlüğü', source: 'Basın Özgürlüğü', type: 'google', category: 'genel' },
     // ── Spor ──────────────────────────────────────────────────────────────────
-    {
-      url: 'https://www.sporx.com/rss/',
-      label: '⚽ Sporx',
-      source: 'Sporx',
-      type: 'direct',
-      category: 'spor',
-    },
-    {
-      url: 'https://www.ntvspor.net/rss',
-      label: '📺 NTV Spor',
-      source: 'NTV Spor',
-      type: 'direct',
-      category: 'spor',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=site:fanatik.com.tr&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚽ Fanatik',
-      source: 'Fanatik',
-      type: 'google',
-      category: 'spor',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=galatasaray+OR+fenerbahce+OR+besiktas+OR+trabzonspor&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚽ Süper Lig Haberleri',
-      source: 'Google Spor',
-      type: 'google',
-      category: 'spor',
-    },
-    {
-      url: 'https://news.google.com/rss/search?q=futbol+rüşvet+OR+TFF+skandal+OR+hakem+skandal+OR+şike&hl=tr&gl=TR&ceid=TR:tr',
-      label: '⚽ Spor Skandal',
-      source: 'Spor Skandal',
-      type: 'google',
-      category: 'spor',
-    },
+    { url: 'https://www.sporx.com/rss/', label: '⚽ Sporx', source: 'Sporx', type: 'direct', category: 'spor' },
+    { url: 'https://www.ntvspor.net/rss', label: '📺 NTV Spor', source: 'NTV Spor', type: 'direct', category: 'spor' },
+    { url: 'https://news.google.com/rss/search?q=site:fanatik.com.tr&hl=tr&gl=TR&ceid=TR:tr', label: '⚽ Fanatik', source: 'Fanatik', type: 'google', category: 'spor' },
+    { url: 'https://news.google.com/rss/search?q=galatasaray+OR+fenerbahce+OR+besiktas+OR+trabzonspor&hl=tr&gl=TR&ceid=TR:tr', label: '⚽ Süper Lig', source: 'Google Spor', type: 'google', category: 'spor' },
+    { url: 'https://news.google.com/rss/search?q=futbol+rüşvet+OR+TFF+skandal+OR+hakem+skandal+OR+şike&hl=tr&gl=TR&ceid=TR:tr', label: '⚽ Spor Skandal', source: 'Spor Skandal', type: 'google', category: 'spor' },
   ];
-  
+
 const CATEGORY_LABELS = {
   hepsi: '🌐 Hepsi',
   genel: '📰 Genel',
@@ -1728,18 +1524,16 @@ const BLOCKED_TITLE_PATTERNS = [
     /\byayın akışı\b/i, /\bkuşak yayın\b/i,
     /^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+[A-ZĞÜŞÖÇİ]/,
 
-    // ─── Deprem / doğal afet clickbait ───────────────────────────────────────
+    // ─── Deprem clickbait ─────────────────────────────────────────────────────
     /deprem mi oldu?/i, /nerede deprem oldu/i, /deprem.*kandilli/i,
     /kandilli.*deprem/i, /afad.*deprem listesi/i, /deprem.*afad.*liste/i,
     /son depremler listesi/i, /kaç şiddetinde deprem/i,
     /en son depremler/i, /hissedildi mi?/i, /az önce deprem/i,
 
-    // ─── Yemek / Tarif / Mutfak filtresi (kapsamlı) ──────────────────────────
-    /\byemek tarifi?\b/i,
-    /\bpratik tarif\b/i, /\bnefis tarif\b/i, /\bözel tarif\b/i,
-    /\btarifi?\s+(nasıl|yapılır|hazırlanır)/i,
-    /\bnasıl yapılır\b/i,
-    /atıştırmalık tarif/i,
+    // ─── Yemek / Tarif / Mutfak (Türkçe + yabancı) ───────────────────────────
+    /\byemek tarifi?\b/i, /\bpratik tarif\b/i, /\bnefis tarif\b/i,
+    /\bözel tarif\b/i, /\btarifi?\s+(nasıl|yapılır|hazırlanır)/i,
+    /\bnasıl yapılır\b/i, /atıştırmalık tarif/i,
     /enerji (barı|topu|içeceği) tarif/i,
     /sağlıklı (tarif|atıştırmalık|beslenme ipucu)/i,
     /rafine şeker (içermeyen|olmadan)/i,
@@ -1750,15 +1544,13 @@ const BLOCKED_TITLE_PATTERNS = [
     /şifalı (bitki|bitkilerin|çay)/i,
     /zayıflat[iı]r m[iı]/i, /sabah aç karnına/i,
     /günde \d+ (bardak|fincan|kaşık)/i,
-    /vücudunuz(dan|a|u)/i,
-    /nefis.*tarif/i, /aşçılık|mutfak sırları/i,
+    /vücudunuz(dan|a|u)/i, /nefis.*tarif/i, /aşçılık|mutfak sırları/i,
     /\b(pasta|kek|börek|çorba|salata)\s+(tarifi?|yapımı|nasıl)/i,
     /\b(kahvaltı|öğle yemeği|akşam yemeği)\s+(önerisi|tarifi?)/i,
     /hangi (diyet|beslenme) (doğru|sağlıklı)/i,
-    /\bkalori\b.*\bbesin\b/i,
-    /\bprotein\s+kaynakları\b/i,
+    /\bkalori\b.*\bbesin\b/i, /\bprotein\s+kaynakları\b/i,
     /bu (besin|meyve|sebze).*(fayda|zarar|sağlık)/i,
-    // Dünya/yabancı mutfağı ve lezzet başlıkları
+    // Dünya/yabancı mutfağı ve lezzet — "Latin mutfağının enfes lezzeti: Lomo Saltado" gibi
     /\b(türk|dünya|fransız|italyan|japon|latin|meksika|hint|çin|yunan|ispanyol|uzakdoğu|anadolu)\s+mutfağı/i,
     /\bmutfağının?\s+(enfes|nefis|efsane|vazgeçilmez|klasik|özel)\s+lezzeti?/i,
     /\b(enfes|nefis|vazgeçilmez|efsane)\s+lezzeti?\b/i,
@@ -1768,24 +1560,20 @@ const BLOCKED_TITLE_PATTERNS = [
     /\bservis ediliyor\b/i,
     /\b(patates kızartması|pilav|makarna)\s+ile\s+servis\b/i,
     /\b(soya sosu|ketçap|mayonez|hardal)\s+ile\s+(lezzetlendirilen|hazırlanan)\b/i,
-    // Yabancı yemek isimleri
-    /\b(lomo saltado|pad thai|kimchi|sushi|sashimi|tempura|risotto|paella|tapas|tacos|nachos|burrito|gyros|shawarma|hummus|falafel|moussaka|lasagna|carbonara|tiramisu)\b/i,
-    // Pişirme tekniği içerikli başlıklar
+    /\b(lomo\s+saltado|pad\s+thai|kimchi|sushi|sashimi|tempura|risotto|paella|tapas|tacos|nachos|burrito|gyros|shawarma|hummus|falafel|moussaka|lasagna|carbonara|tiramisu)\b/i,
     /\b(yüksek ateşte|kısık ateşte|orta ateşte)\s+(sote|pişirilen|hazırlanan)\b/i,
-    /\b(sos|çeşni|baharat)\s+ile\s+(lezzetlendirilen|zenginleştirilen)\b/i,
     /\bgeleneksel olarak\s+(pilav|makarna|ekmek)\s+ile\b/i,
 
-    // ─── Burç / Astroloji / Horoskop filtresi (geniş) ─────────────────────────
+    // ─── Burç / Astroloji / Horoskop ──────────────────────────────────────────
     /\b(günlük|haftalık|aylık)\s+(burç|horoskop|astroloji)/i,
     /\bburç\s+(yorumu|tahmin|öngörü|analizi)/i,
     /\bburçlar.*bugün\b/i, /\bbugün.*burçlar\b/i,
     /\bastroloji\s+(yorumu|tahmini|analizi)/i,
     /\b(koç|boğa|ikizler|yengeç|aslan|başak|terazi|akrep|yay|oğlak|kova|balık)\s+burcu/i,
     /\bfal\s+(bak|yorumu|tahmini)/i,
-    /\btarot\s+(fal|kart|yorumu)/i,
-    /\bkahve falı\b/i,
+    /\btarot\s+(fal|kart|yorumu)/i, /\bkahve falı\b/i,
 
-    // ─── Magazin / dedikodu / clickbait filtresi ─────────────────────────────
+    // ─── Magazin / dedikodu / clickbait ──────────────────────────────────────
     /bakışlarıyla.*vurdu|gözleriyle.*vurdu|vuruldu.*bakış/i,
     /\b(aşk bombası|aşka geldi|aşkını ilan|gönlünü kaptır|gönlünü çald|kalpleri çald)/i,
     /\b(büyük randevu|yasak aşk|gizli aşk|sır aşk)/i,
@@ -1800,13 +1588,13 @@ const BLOCKED_TITLE_PATTERNS = [
     /\d+['']?den vurdu/i,
     /\d+\s*yaşında(ki)?\s+(ünlü|oyuncu|şarkıcı|model)/i,
 
-    // ─── Soru formatı clickbait filtresi ──────────────────────────────────────
+    // ─── Soru formatı clickbait ──────────────────────────────────────────────
     /\b(açıldı|kapandı|kalktı|geldi|gitti|bitti|oldu|olacak|yapıldı|verildi|kaldırıldı|ertelendi|iptal edildi|uzatıldı|değişti|arttı|düştü)\s+m[ıiuü]\?/i,
     /\b(devam edecek|devam ediyor|geri dönüyor|geri döndü|başlıyor|başladı|bitiyor)\s+m[ıiuü]\?/i,
     /\b(eğitime|üretime|faaliyete)\s+devam\s+edecek\s+m[ıiuü]\?/i,
     /\?[^?]{0,60}\?\s*$/,
 
-    // ─── Teknoloji / ürün tanıtım / gadget filtresi ───────────────────────────
+    // ─── Teknoloji / ürün tanıtım ────────────────────────────────────────────
     /\b(inceleme|review|test ettik|kullandık|denedik)\b.*(telefon|laptop|tablet|kulaklık|saat|kamera|tv|ekran)/i,
     /\b(en iyi|en ucuz|satın alma|fiyat karşılaştır).*(telefon|laptop|tablet|uygulama|yazılım)/i,
     /\b(lansman|tanıtım|duyuruldu|piyasaya çıktı).*(iphone|samsung|xiaomi|huawei|apple|google pixel)/i,
@@ -1814,18 +1602,28 @@ const BLOCKED_TITLE_PATTERNS = [
     /\b(uygulama|app)\s+(güncellendi|yayınlandı|indir)/i,
     /\b(yapay zeka|chatgpt|gemini|copilot).*(dene|nasıl kullan|pratik|ipucu|özellik)/i,
 
-    // ─── Yaşam tarzı / sağlık ipuçları filtresi ───────────────────────────────
+    // ─── Yaşam tarzı ─────────────────────────────────────────────────────────
     /\b(kombin|kıyafet önerisi|aksesuar önerisi|makyaj tüyoları|cilt bakım rutini)/i,
     /\b(tatilinizi|seyahatinizi|gezginler için|en güzel (plaj|otel|destinasyon))\b/i,
     /\b(burç|astroloji|fal|tarot)\b/i,
   ];
-// İçerik bazlı yemek/tarif tespiti — başlık filtresinden geçen içerikleri yakalar
+
+function isRecentNews(item) {
+  const rawDate = item.pubDate || item.published || item.isoDate;
+  if (!rawDate) return true;
+  const date = new Date(rawDate);
+  if (isNaN(date.getTime())) return true;
+  const maxAgeMs = (settings.maxAgeHours || 24) * 60 * 60 * 1000;
+  return Date.now() - date.getTime() < maxAgeMs;
+}
+
+// İçerik bazlı yemek filtresi — başlık geçse bile açıklamayı kontrol eder
   const FOOD_CONTENT_PATTERNS = [
     /\b(tarifi|pişirilir|pişirme|malzeme listesi|malzemeler|hazırlanış|yapılış)\b/i,
     /\b(sote|marine|blanş|güveç|fırında|kızart|haşla)\b/i,
     /\b(yemek tarifi|lezzetlendirilen|servis ediliyor|servis edilir)\b/i,
     /\b(yüksek ateşte|orta ateşte|kısık ateşte)\b/i,
-    /\b(afiyet olsun|bon appétit)\b/i,
+    /\bafiyet olsun\b/i,
     /\b(pilav|makarna|ekmek)\s+ile\s+servis\b/i,
     /\b(soya sosu|zeytinyağı|tereyağı)\s+ile\s+(kavrul|karıştır|lezzetlendir)/i,
   ];
@@ -1839,7 +1637,7 @@ const BLOCKED_TITLE_PATTERNS = [
     if (/^https?:\/\//i.test(title)) return false;
     if (BLOCKED_TITLE_PATTERNS.some((p) => p.test(title))) return false;
 
-    // İçerik/açıklama bazlı yemek filtresi — başlık geçse bile içerik yakalanır
+    // Açıklama bazlı yemek filtresi — başlık geçse de içerik yakalanır
     if (description && description.length > 30) {
       if (FOOD_CONTENT_PATTERNS.some((p) => p.test(description))) {
         console.log(`⏭ Yemek içeriği (açıklama) atlandı: ${title.slice(0, 50)}`);
