@@ -140,7 +140,7 @@ const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.28 — yemek/burc/teknoloji filtreleri guclendirildi, asayis+yolsuzluk kaynaklari eklendi — 2026-05-31');
+console.log('🤖 Bot v2.29 — yabancı mutfak/lezzet/yemek filtresi güçlendirildi + içerik bazlı filtre — 2026-05-31');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -1723,64 +1723,62 @@ const BLOCKED_TITLE_PATTERNS = [
     /toplantı notları/i, /basın açıklaması listesi/i,
     /#canl[iı]/i, /canl[iı]\s*yay[iı]n/i, /\bLIVE\b/i,
     /\b(ile\s+rota|ile\s+başak|programı?|özel yayın|stüdyo|röportaj kuşağı)\b/i,
-    /\bçalar saat\b/i,
-    /\bana haber(ler)?\b/i,
-    /\bsabah bülteni\b/i,
-    /\bhaber kuşağı\b/i,
-    /\bhaberleri.*\b\d{4}\b/i,
-    /\byayın akışı\b/i,
-    /\bkuşak yayın\b/i,
+    /\bçalar saat\b/i, /\bana haber(ler)?\b/i, /\bsabah bülteni\b/i,
+    /\bhaber kuşağı\b/i, /\bhaberleri.*\b\d{4}\b/i,
+    /\byayın akışı\b/i, /\bkuşak yayın\b/i,
     /^\d{1,2}\s+[A-Za-zğüşöçİĞÜŞÖÇı]+\s+\d{4}\s+[A-ZĞÜŞÖÇİ]/,
 
-    // ─── Deprem / doğal afet clickbait filtresi ───────────────────────────────
-    /deprem mi oldu?/i,
-    /nerede deprem oldu/i,
-    /deprem.*kandilli/i,
-    /kandilli.*deprem/i,
-    /afad.*deprem listesi/i,
-    /deprem.*afad.*liste/i,
-    /son depremler listesi/i,
-    /kaç şiddetinde deprem/i,
-    /en son depremler/i,
-    /hissedildi mi?/i,
-    /az önce deprem/i,
+    // ─── Deprem / doğal afet clickbait ───────────────────────────────────────
+    /deprem mi oldu?/i, /nerede deprem oldu/i, /deprem.*kandilli/i,
+    /kandilli.*deprem/i, /afad.*deprem listesi/i, /deprem.*afad.*liste/i,
+    /son depremler listesi/i, /kaç şiddetinde deprem/i,
+    /en son depremler/i, /hissedildi mi?/i, /az önce deprem/i,
 
-    // ─── Yemek / Tarif filtresi (geniş) ──────────────────────────────────────
+    // ─── Yemek / Tarif / Mutfak filtresi (kapsamlı) ──────────────────────────
     /\byemek tarifi?\b/i,
-    /\bpratik tarif\b/i,
-    /\bnefis tarif\b/i,
-    /\bözel tarif\b/i,
+    /\bpratik tarif\b/i, /\bnefis tarif\b/i, /\bözel tarif\b/i,
     /\btarifi?\s+(nasıl|yapılır|hazırlanır)/i,
     /\bnasıl yapılır\b/i,
     /atıştırmalık tarif/i,
     /enerji (barı|topu|içeceği) tarif/i,
     /sağlıklı (tarif|atıştırmalık|beslenme ipucu)/i,
     /rafine şeker (içermeyen|olmadan)/i,
-    /pekmezli.*tarif/i,
-    /kuruyemiş.*tarif/i,
+    /pekmezli.*tarif/i, /kuruyemiş.*tarif/i,
     /kilo (vermek|aldırmak|kontrolü).*ipucu/i,
-    /diyabet.*beslenme/i,
-    /bağışıklık.*güçlendir/i,
+    /diyabet.*beslenme/i, /bağışıklık.*güçlendir/i,
     /hangi (besin|gıda|yiyecek).*faydalı/i,
     /şifalı (bitki|bitkilerin|çay)/i,
-    /zayıflat[iı]r m[iı]/i,
-    /sabah aç karnına/i,
+    /zayıflat[iı]r m[iı]/i, /sabah aç karnına/i,
     /günde \d+ (bardak|fincan|kaşık)/i,
     /vücudunuz(dan|a|u)/i,
-    /nefis.*tarif/i,
-    /aşçılık|mutfak sırları/i,
+    /nefis.*tarif/i, /aşçılık|mutfak sırları/i,
     /\b(pasta|kek|börek|çorba|salata)\s+(tarifi?|yapımı|nasıl)/i,
     /\b(kahvaltı|öğle yemeği|akşam yemeği)\s+(önerisi|tarifi?)/i,
     /hangi (diyet|beslenme) (doğru|sağlıklı)/i,
     /\bkalori\b.*\bbesin\b/i,
     /\bprotein\s+kaynakları\b/i,
     /bu (besin|meyve|sebze).*(fayda|zarar|sağlık)/i,
+    // Dünya/yabancı mutfağı ve lezzet başlıkları
+    /\b(türk|dünya|fransız|italyan|japon|latin|meksika|hint|çin|yunan|ispanyol|uzakdoğu|anadolu)\s+mutfağı/i,
+    /\bmutfağının?\s+(enfes|nefis|efsane|vazgeçilmez|klasik|özel)\s+lezzeti?/i,
+    /\b(enfes|nefis|vazgeçilmez|efsane)\s+lezzeti?\b/i,
+    /\b(geleneksel|klasik)\s+(lezzet|yemek|tarif)\b/i,
+    /\b(sote|marine|blanş|güveç|ızgara|fırında)\s+(et|tavuk|sebze|balık|dana|kuzu)\b/i,
+    /\b(dana|kuzu|tavuk|balık|et)\s+(şeritleri?|dilimleri?|parçaları?|kızartma)\b/i,
+    /\bservis ediliyor\b/i,
+    /\b(patates kızartması|pilav|makarna)\s+ile\s+servis\b/i,
+    /\b(soya sosu|ketçap|mayonez|hardal)\s+ile\s+(lezzetlendirilen|hazırlanan)\b/i,
+    // Yabancı yemek isimleri
+    /\b(lomo saltado|pad thai|kimchi|sushi|sashimi|tempura|risotto|paella|tapas|tacos|nachos|burrito|gyros|shawarma|hummus|falafel|moussaka|lasagna|carbonara|tiramisu)\b/i,
+    // Pişirme tekniği içerikli başlıklar
+    /\b(yüksek ateşte|kısık ateşte|orta ateşte)\s+(sote|pişirilen|hazırlanan)\b/i,
+    /\b(sos|çeşni|baharat)\s+ile\s+(lezzetlendirilen|zenginleştirilen)\b/i,
+    /\bgeleneksel olarak\s+(pilav|makarna|ekmek)\s+ile\b/i,
 
     // ─── Burç / Astroloji / Horoskop filtresi (geniş) ─────────────────────────
     /\b(günlük|haftalık|aylık)\s+(burç|horoskop|astroloji)/i,
     /\bburç\s+(yorumu|tahmin|öngörü|analizi)/i,
-    /\bburçlar.*bugün\b/i,
-    /\bbugün.*burçlar\b/i,
+    /\bburçlar.*bugün\b/i, /\bbugün.*burçlar\b/i,
     /\bastroloji\s+(yorumu|tahmini|analizi)/i,
     /\b(koç|boğa|ikizler|yengeç|aslan|başak|terazi|akrep|yay|oğlak|kova|balık)\s+burcu/i,
     /\bfal\s+(bak|yorumu|tahmini)/i,
@@ -1796,8 +1794,7 @@ const BLOCKED_TITLE_PATTERNS = [
     /\b(nişanlandı|evlendi|düğün haberi|evlilik haberi).*magazin/i,
     /\b(hamile (olduğu|kaldığı)|bebek bekliyor|bebek haberi)/i,
     /\bgözler.*üzerine (çevrildi|dikildi)|herkes.*konuşuyor/i,
-    /son dakika magazin/i,
-    /magazin\s+haberleri?/i,
+    /son dakika magazin/i, /magazin\s+haberleri?/i,
     /\b(ünlü (isim|çift|oyuncu|şarkıcı)).*\b(ihanet|aldatt|şok görüntü|olay görüntü)/i,
     /şok (görüntü|ifade|itiraf|açıklama).*magazin/i,
     /\d+['']?den vurdu/i,
@@ -1822,41 +1819,48 @@ const BLOCKED_TITLE_PATTERNS = [
     /\b(tatilinizi|seyahatinizi|gezginler için|en güzel (plaj|otel|destinasyon))\b/i,
     /\b(burç|astroloji|fal|tarot)\b/i,
   ];
-  
-function isRecentNews(item) {
-  const rawDate = item.pubDate || item.published || item.isoDate;
-  if (!rawDate) return true;
-  const date = new Date(rawDate);
-  if (isNaN(date.getTime())) return true;
-  const maxAgeMs = (settings.maxAgeHours || 24) * 60 * 60 * 1000;
-  return Date.now() - date.getTime() < maxAgeMs;
-}
+// İçerik bazlı yemek/tarif tespiti — başlık filtresinden geçen içerikleri yakalar
+  const FOOD_CONTENT_PATTERNS = [
+    /\b(tarifi|pişirilir|pişirme|malzeme listesi|malzemeler|hazırlanış|yapılış)\b/i,
+    /\b(sote|marine|blanş|güveç|fırında|kızart|haşla)\b/i,
+    /\b(yemek tarifi|lezzetlendirilen|servis ediliyor|servis edilir)\b/i,
+    /\b(yüksek ateşte|orta ateşte|kısık ateşte)\b/i,
+    /\b(afiyet olsun|bon appétit)\b/i,
+    /\b(pilav|makarna|ekmek)\s+ile\s+servis\b/i,
+    /\b(soya sosu|zeytinyağı|tereyağı)\s+ile\s+(kavrul|karıştır|lezzetlendir)/i,
+  ];
 
-function isValidNewsItem(item, feed) {
-  const title = (item.title || '').trim();
-  const description = (item.contentSnippet || item.summary || '').trim();
+  function isValidNewsItem(item, feed) {
+    const title = (item.title || '').trim();
+    const description = (item.contentSnippet || item.summary || '').trim();
 
-  if (title.length < 10) return false;
-  if (title.toLowerCase() === feed.source.toLowerCase()) return false;
-  if (/^https?:\/\//i.test(title)) return false;
-  if (BLOCKED_TITLE_PATTERNS.some((p) => p.test(title))) return false;
+    if (title.length < 10) return false;
+    if (title.toLowerCase() === feed.source.toLowerCase()) return false;
+    if (/^https?:\/\//i.test(title)) return false;
+    if (BLOCKED_TITLE_PATTERNS.some((p) => p.test(title))) return false;
 
-  if (description && description.length < 20) {
-    const descLower = description.toLowerCase();
-    if (descLower === feed.source.toLowerCase()) return false;
-    if (/^https?:\/\//i.test(description)) return false;
+    // İçerik/açıklama bazlı yemek filtresi — başlık geçse bile içerik yakalanır
+    if (description && description.length > 30) {
+      if (FOOD_CONTENT_PATTERNS.some((p) => p.test(description))) {
+        console.log(`⏭ Yemek içeriği (açıklama) atlandı: ${title.slice(0, 50)}`);
+        return false;
+      }
+    }
+
+    if (description && description.length < 20) {
+      const descLower = description.toLowerCase();
+      if (descLower === feed.source.toLowerCase()) return false;
+      if (/^https?:\/\//i.test(description)) return false;
+    }
+
+    if (!isRecentNews(item)) {
+      const rawDate = item.pubDate || item.published || item.isoDate;
+      console.log(`⏭ Eski haber atlandı (${rawDate}): ${title.slice(0, 40)}`);
+      return false;
+    }
+
+    return true;
   }
-
-  if (!isRecentNews(item)) {
-    const rawDate = item.pubDate || item.published || item.isoDate;
-    console.log(`⏭ Eski haber atlandı (${rawDate}): ${title.slice(0, 40)}`);
-    return false;
-  }
-
-  // Medya kontrolü artık yayın aşamasında yapılıyor (og:image çekimi sonrası)
-  // RSS'te medya olmasa da web'den og:image çekilebilir
-  return true;
-}
 
 function itemHasVideo(it) {
   const enc = it.enclosure;
