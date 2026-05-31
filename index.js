@@ -136,11 +136,15 @@ if (AI_ENABLED) {
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID || '@muhalif_gazete';
+// Yorum grubu: kanalınıza bağlı tartışma grubunun Telegram ID'si (ör: -1001234567890)
+const DISCUSSION_GROUP_ID = process.env.DISCUSSION_GROUP_ID || '';
+// Kanal kullanıcı adı — haber linki oluşturmak için (ör: muhalif_gazete, @ olmadan)
+const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME || (CHANNEL_ID.startsWith('@') ? CHANNEL_ID.slice(1) : '');
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin2024';
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID || '';
 
-console.log('🤖 Bot v2.30 — orijinal tabandan yeniden inşa: yemek/burç/mutfak/asayis/yolsuzluk — 2026-05-31');
+console.log('🤖 Bot v2.31 — duplikat önleme güçlendirildi + yorum thread desteği — 2026-05-31');
 
 if (!BOT_TOKEN) {
   console.error('❌ BOT_TOKEN eksik!');
@@ -2830,6 +2834,11 @@ let publishNowStartTime = 0;
         publishedUrls.add(itemUrl);
         return false;
       }
+      // Benzerlik kontrolü — farklı kaynaktan gelen aynı haber tekrar yayınlanmasın
+      if (isTitleDuplicate(a.title, { add: false })) {
+        publishedUrls.add(itemUrl);
+        return false;
+      }
       return true;
     });
     const valid = notPublished.filter((a) => {
@@ -3079,9 +3088,27 @@ let publishNowStartTime = 0;
   }
 
   await notifyFilterUsers(title, rawDesc, url).catch(() => {});
+    // Başlığı kalıcı kaydet — bot restart sonrası aynı haber tekrar yayınlanmasın
+    isTitleDuplicate(title);
+    persistPublishedTitles().catch(() => {});
 
-  return null;
-}
+    // ─── Yorum thread başlat (DISCUSSION_GROUP_ID ayarlıysa) ───────────────────
+    if (DISCUSSION_GROUP_ID && sentMsg?.message_id) {
+      try {
+        const _postLink = CHANNEL_USERNAME
+          ? `https://t.me/${CHANNEL_USERNAME.replace('@', '')}/${sentMsg.message_id}`
+          : null;
+        const _threadText = _postLink
+          ? `💬 <b>${(title||'').slice(0,120).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</b>\n\n<a href="${_postLink}">📰 Haberi oku</a>  |  <a href="${url}">🔗 Kaynak</a>\n\n✍️ Yorumunuzu aşağıya yazın:`
+          : `💬 <b>${(title||'').slice(0,120).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</b>\n\n<a href="${url}">🔗 Kaynak</a>\n\n✍️ Yorumunuzu aşağıya yazın:`;
+        await bot.sendMessage(DISCUSSION_GROUP_ID, _threadText, { parse_mode: 'HTML', disable_web_page_preview: true });
+      } catch (_te) {
+        console.log(`⚠️ Yorum thread başlatılamadı: ${_te.message?.slice(0,60)}`);
+      }
+    }
+
+    return null;
+  }
 
 
   // ─── Google News URL Base64 Decoder ──────────────────────────────────────────
